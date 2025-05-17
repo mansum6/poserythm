@@ -27,12 +27,17 @@
             margin-top: 10px;
             color: #2c3e50;
         }
+        #status {
+            color: #e74c3c;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
     <h1>Real-Time Pose Detection</h1>
     <video id="video" width="640" height="480" autoplay playsinline></video>
     <div id="pose">Status: Loading model...</div>
+    <div id="status"></div>
 
     <script type="module">
         import * as tf from '@tensorflow/tfjs';
@@ -95,17 +100,35 @@
             return video;
         }
 
-        // Load pose detection model
+        // Load pose detection model with proper backend initialization
         async function loadModel() {
-            const detectorConfig = { 
-                modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING 
-            };
-            const detector = await poseDetection.createDetector(
-                poseDetection.SupportedModels.MoveNet, 
-                detectorConfig
-            );
-            gameState.poseDetector = detector;
-            document.getElementById('pose').textContent = 'Status: Model loaded. Starting detection...';
+            try {
+                // First ensure TensorFlow.js is ready
+                await tf.ready();
+                
+                // Optional: Force WebGL backend if having issues with WebGPU
+                // await tf.setBackend('webgl');
+                
+                // Check which backend is active
+                const backend = tf.getBackend();
+                console.log(`Using TensorFlow.js backend: ${backend}`);
+                
+                const detectorConfig = { 
+                    modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING 
+                };
+                const detector = await poseDetection.createDetector(
+                    poseDetection.SupportedModels.MoveNet, 
+                    detectorConfig
+                );
+                gameState.poseDetector = detector;
+                document.getElementById('pose').textContent = 'Status: Model loaded. Starting detection...';
+                return true;
+            } catch (error) {
+                console.error('Model loading error:', error);
+                document.getElementById('status').textContent = 
+                    'Error: Failed to initialize TensorFlow.js. Try refreshing or using a different browser.';
+                return false;
+            }
         }
 
         // Main detection loop
@@ -278,16 +301,22 @@
         // Start application
         async function main() {
             try {
-                await loadModel();
+                // Initialize TensorFlow.js
+                const modelLoaded = await loadModel();
+                if (!modelLoaded) return;
+
+                // Initialize camera
                 await initCamera();
-                // Start detection loop after a short delay to allow UI to update
+                
+                // Start detection loop after a short delay
                 setTimeout(() => {
                     document.getElementById('pose').textContent = 'Current Pose: Idle';
                     detectPose();
                 }, 1000);
             } catch (error) {
                 console.error('Initialization error:', error);
-                document.getElementById('pose').textContent = 'Error: Failed to initialize camera or model';
+                document.getElementById('status').textContent = 
+                    'Error: Failed to initialize camera or model';
             }
         }
 
