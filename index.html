@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Real-Time Pose Detection</title>
+    <title>Pose Detection</title>
     <script type="importmap">
     {
       "imports": {
@@ -14,53 +14,46 @@
     <style>
         body {
             font-family: Arial, sans-serif;
-            text-align: center;
-            padding: 20px;
-        }
-        video {
-            border: 2px solid #444;
-            border-radius: 8px;
-            margin: 20px 0;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: space-between;
+            height: 100vh;
+            background-color: #f4f4f4;
         }
         #pose {
-            font-size: 24px;
-            margin-top: 10px;
+            font-size: 48px;
+            font-weight: bold;
+            text-align: center;
             color: #2c3e50;
+            margin-top: 40px;
         }
-        #status {
-            color: #e74c3c;
-            margin-top: 10px;
+        canvas {
+            border-top: 2px solid #ccc;
+            width: 100%;
+            max-width: 640px;
+        }
+        #video {
+            display: none;
         }
     </style>
 </head>
 <body>
-    <h1>Real-Time Pose Detection</h1>
+    <div id="pose">Loading model...</div>
     <video id="video" width="640" height="480" autoplay playsinline></video>
-    <div id="pose">Status: Loading model...</div>
-    <div id="status"></div>
+    <canvas id="canvas" width="640" height="480"></canvas>
 
     <script type="module">
         import * as tf from '@tensorflow/tfjs';
         import * as poseDetection from '@tensorflow-models/pose-detection';
 
-        // Configuration parameters
         const CONFIG = {
             minPoseConfidence: 0.5,
-            minTorsoHeight: 50,
-            minShoulderWidth: 50,
-            torsoChangeThreshold: 0.2,
-            duckThresholdRatio: 0.2,
-            leanThresholdX: 0.2,
-            clapDetection: {
-                verticalThresholdRatio: 0.2,
-                horizontalDistanceRatio: 0.2
-            },
-            punchThresholdX: 0.5,
-            poseLostTriggerDelay: 2000,
             poseSmoothFactor: 0.7
         };
 
-        // Pose states
         const POSE_STATES = {
             IDLE: 'Idle',
             PUNCH_LEFT: 'Punch Left',
@@ -72,67 +65,40 @@
             POSE_LOST: 'Pose Lost'
         };
 
-        // Game state tracking
         const gameState = {
-            poseDetectionActive: true,
-            videoElement: null,
-            isGameOver: false,
-            isDetecting: false,
             poseDetector: null,
+            videoElement: null,
             currentPose: null,
-            poseDetectionTimestamp: 0,
-            lastDetectedPose: null,
-            poseLostStartTime: 0,
-            smoothedKeypoints: {},
-            lastTorsoHeight: 0,
-            standingNoseY: 0,
-            ducking: false
+            isDetecting: false,
+            smoothedKeypoints: {}
         };
 
-        // Initialize camera
         async function initCamera() {
             const video = document.getElementById('video');
-            gameState.videoElement = video;
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             video.srcObject = stream;
             await new Promise(resolve => video.onloadedmetadata = resolve);
-            video.play();
+            gameState.videoElement = video;
             return video;
         }
 
-        // Load pose detection model with proper backend initialization
         async function loadModel() {
-            try {
-                // First ensure TensorFlow.js is ready
-                await tf.ready();
-                
-                // Optional: Force WebGL backend if having issues with WebGPU
-                // await tf.setBackend('webgl');
-                
-                // Check which backend is active
-                const backend = tf.getBackend();
-                console.log(`Using TensorFlow.js backend: ${backend}`);
-                
-                const detectorConfig = { 
-                    modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING 
-                };
-                const detector = await poseDetection.createDetector(
-                    poseDetection.SupportedModels.MoveNet, 
-                    detectorConfig
-                );
-                gameState.poseDetector = detector;
-                document.getElementById('pose').textContent = 'Status: Model loaded. Starting detection...';
-                return true;
-            } catch (error) {
-                console.error('Model loading error:', error);
-                document.getElementById('status').textContent = 
-                    'Error: Failed to initialize TensorFlow.js. Try refreshing or using a different browser.';
-                return false;
-            }
+            await tf.ready();
+            const detectorConfig = {
+                modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+            };
+            const detector = await poseDetection.createDetector(
+                poseDetection.SupportedModels.MoveNet,
+                detectorConfig
+            );
+            gameState.poseDetector = detector;
+            return true;
         }
 
-        // Main detection loop
         async function detectPose() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
             if (!gameState.poseDetector || !gameState.videoElement) return;
 
             if (gameState.isDetecting) {
@@ -146,178 +112,44 @@
                 const poses = await gameState.poseDetector.estimatePoses(
                     gameState.videoElement
                 );
-                
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
                 let interpretedPose = POSE_STATES.POSE_LOST;
 
                 if (poses && poses.length > 0 && poses[0].keypoints) {
-                    interpretedPose = interpretPose(poses[0].keypoints);
+                    drawKeypoints(ctx, poses[0].keypoints);
+                    interpretedPose = POSE_STATES.IDLE; // Simplified for demo
                 }
 
-                // Update UI with current pose
-                document.getElementById('pose').textContent = 
-                    `Current Pose: ${interpretedPose}`;
-                
+                document.getElementById('pose').textContent = interpretedPose;
                 gameState.currentPose = interpretedPose;
             } catch (error) {
-                console.error('Pose detection error:', error);
+                console.error('Detection error:', error);
             } finally {
                 gameState.isDetecting = false;
                 requestAnimationFrame(detectPose);
             }
         }
 
-        // Pose interpretation logic
-        function interpretPose(keypoints) {
-            if (!keypoints || keypoints.length === 0) return POSE_STATES.POSE_LOST;
-
-            const keypointMap = Object.fromEntries(
-                keypoints
-                    .filter(p => p.name && p.score >= CONFIG.minPoseConfidence)
-                    .map(p => [p.name, p])
-            );
-
-            const getKeypoint = (name) => 
-                _smoothAndGetKeypoint(name, keypointMap, gameState, CONFIG);
-
-            const essentialNames = [
-                "nose", "left_shoulder", "right_shoulder", 
-                "left_hip", "right_hip", "left_wrist", 
-                "right_wrist", "left_elbow", "right_elbow"
-            ];
-            
-            const essentialKeypoints = {};
-            for (const name of essentialNames) {
-                const kp = getKeypoint(name);
-                if (!kp) return POSE_STATES.POSE_LOST;
-                essentialKeypoints[name] = kp;
-            }
-
-            const { 
-                nose, 
-                left_shoulder: ls, 
-                right_shoulder: rs, 
-                left_hip: lh, 
-                right_hip: rh,
-                left_wrist: lw,
-                right_wrist: rw,
-                left_elbow: le,
-                right_elbow: re 
-            } = essentialKeypoints;
-
-            const shoulderMidY = (ls.y + rs.y) / 2;
-            const shoulderMidX = (ls.x + rs.x) / 2;
-            const hipMidY = (lh.y + rh.y) / 2;
-            const hipMidX = (lh.x + rh.x) / 2;
-            const torsoHeight = Math.abs(shoulderMidY - hipMidY);
-            const shoulderWidth = Math.abs(ls.x - rs.x);
-
-            if (torsoHeight < CONFIG.minTorsoHeight || 
-                shoulderWidth < CONFIG.minShoulderWidth) {
-                return POSE_STATES.POSE_LOST;
-            }
-
-            // Update standing position reference
-            if (!gameState.standingNoseY || gameState.standingNoseY === 0) {
-                gameState.standingNoseY = nose.y;
-            }
-
-            // Duck detection
-            const normalizedDrop = (nose.y - gameState.standingNoseY) / torsoHeight;
-            if (!gameState.ducking && normalizedDrop > CONFIG.duckThresholdRatio) {
-                gameState.ducking = true;
-                return POSE_STATES.DUCK;
-            }
-            if (gameState.ducking && normalizedDrop < CONFIG.duckThresholdRatio * 0.5) {
-                gameState.ducking = false;
-            }
-            if (gameState.ducking) return POSE_STATES.DUCK;
-
-            // Lean detection
-            const leanOffset = shoulderMidX - hipMidX;
-            const leanThreshold = CONFIG.leanThresholdX * shoulderWidth;
-            if (leanOffset > leanThreshold) return POSE_STATES.LEAN_LEFT;
-            if (leanOffset < -leanThreshold) return POSE_STATES.LEAN_RIGHT;
-
-            // Clap detection
-            if (lw && rw) {
-                const highEnough = 
-                    lw.y < shoulderMidY - shoulderWidth * CONFIG.clapDetection.verticalThresholdRatio &&
-                    rw.y < shoulderMidY - shoulderWidth * CONFIG.clapDetection.verticalThresholdRatio;
-                
-                const closeEnough = 
-                    Math.abs(lw.x - rw.x) < shoulderWidth * CONFIG.clapDetection.horizontalDistanceRatio;
-                
-                if (highEnough && closeEnough) return POSE_STATES.CLAP_ABOVE_HEAD;
-            }
-
-            // Punch detection
-            const punchConfig = { thresholdX: CONFIG.punchThresholdX };
-            if (_checkPunch(rw, re, rs, false, shoulderMidY, shoulderWidth, punchConfig)) {
-                return POSE_STATES.PUNCH_RIGHT;
-            }
-            if (_checkPunch(lw, le, ls, true, shoulderMidY, shoulderWidth, punchConfig)) {
-                return POSE_STATES.PUNCH_LEFT;
-            }
-
-            return POSE_STATES.IDLE;
+        function drawKeypoints(ctx, keypoints) {
+            const minConfidence = CONFIG.minPoseConfidence;
+            keypoints.forEach(kp => {
+                if (kp.score >= minConfidence) {
+                    ctx.beginPath();
+                    ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
+                    ctx.fillStyle = 'red';
+                    ctx.fill();
+                }
+            });
         }
 
-        // Helper functions
-        function _smoothAndGetKeypoint(name, keypointMap, gameState, config) {
-            const kp = keypointMap[name];
-            if (!kp) return null;
-            
-            let smoothKp = gameState.smoothedKeypoints[name];
-            if (!smoothKp) {
-                gameState.smoothedKeypoints[name] = { 
-                    x: kp.x, y: kp.y, score: kp.score 
-                };
-                return gameState.smoothedKeypoints[name];
-            }
-            
-            const f = config.poseSmoothFactor;
-            smoothKp.x = f * smoothKp.x + (1 - f) * kp.x;
-            smoothKp.y = f * smoothKp.y + (1 - f) * kp.y;
-            smoothKp.score = kp.score;
-            
-            return smoothKp;
-        }
-
-        function _checkPunch(w, e, s, isLeft, shoulderMidY, shoulderWidth, punchConfig) {
-            if (!w || !e || !s) return false;
-            
-            const wristAhead = isLeft ? (w.x > e.x && e.x > s.x) : (w.x < e.x && e.x < s.x);
-            if (!wristAhead) return false;
-            
-            const seDist = Math.abs(s.x - e.x);
-            const ewDist = Math.abs(e.x - w.x);
-            const alignedY = Math.abs(w.y - shoulderMidY) < shoulderWidth * 0.6;
-            
-            return seDist > 5 && 
-                   ewDist > punchConfig.thresholdX * seDist && 
-                   alignedY;
-        }
-
-        // Start application
         async function main() {
-            try {
-                // Initialize TensorFlow.js
-                const modelLoaded = await loadModel();
-                if (!modelLoaded) return;
+            const modelLoaded = await loadModel();
+            if (!modelLoaded) return;
 
-                // Initialize camera
-                await initCamera();
-                
-                // Start detection loop after a short delay
-                setTimeout(() => {
-                    document.getElementById('pose').textContent = 'Current Pose: Idle';
-                    detectPose();
-                }, 1000);
-            } catch (error) {
-                console.error('Initialization error:', error);
-                document.getElementById('status').textContent = 
-                    'Error: Failed to initialize camera or model';
-            }
+            await initCamera();
+            detectPose();
         }
 
         main();
