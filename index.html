@@ -1,158 +1,166 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Pose Detection</title>
-    <script type="importmap">
+  <meta charset="UTF-8" />
+  <title>Real-Time Pose Detection</title>
+  <script type="importmap">
     {
       "imports": {
         "@tensorflow/tfjs": "https://esm.sh/@tensorflow/tfjs@4.20.0",
         "@tensorflow-models/pose-detection": "https://cdn.skypack.dev/@tensorflow-models/pose-detection@2.1.3"
       }
     }
-    </script>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: space-between;
-            height: 100vh;
-            background-color: #f4f4f4;
-        }
-        #pose {
-            font-size: 48px;
-            font-weight: bold;
-            text-align: center;
-            color: #2c3e50;
-            margin-top: 40px;
-        }
-        canvas {
-            border-top: 2px solid #ccc;
-            width: 100%;
-            max-width: 640px;
-        }
-        #video {
-            display: none;
-        }
-    </style>
+  </script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f0f0f0;
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      height: 100vh;
+    }
+
+    #pose {
+      font-size: 64px;
+      font-weight: bold;
+      color: #2c3e50;
+      margin: 20px 0 10px 0;
+      text-align: center;
+    }
+
+    .video-container {
+      position: relative;
+      width: 640px;
+      height: 480px;
+    }
+
+    #video {
+      width: 640px;
+      height: 480px;
+      border-radius: 10px;
+      background-color: #000;
+    }
+
+    #canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 640px;
+      height: 480px;
+      pointer-events: none;
+    }
+  </style>
 </head>
 <body>
-    <div id="pose">Loading model...</div>
-    <video id="video" width="640" height="480" autoplay playsinline></video>
+  <div id="pose">Loading model...</div>
+
+  <div class="video-container">
+    <video id="video" width="640" height="480" autoplay playsinline muted></video>
     <canvas id="canvas" width="640" height="480"></canvas>
+  </div>
 
-    <script type="module">
-        import * as tf from '@tensorflow/tfjs';
-        import * as poseDetection from '@tensorflow-models/pose-detection';
+  <script type="module">
+    import * as tf from '@tensorflow/tfjs';
+    import * as poseDetection from '@tensorflow-models/pose-detection';
 
-        const CONFIG = {
-            minPoseConfidence: 0.5,
-            poseSmoothFactor: 0.7
-        };
+    const CONFIG = {
+      minPoseConfidence: 0.5
+    };
 
-        const POSE_STATES = {
-            IDLE: 'Idle',
-            PUNCH_LEFT: 'Punch Left',
-            PUNCH_RIGHT: 'Punch Right',
-            CLAP_ABOVE_HEAD: 'Clap Above Head',
-            DUCK: 'Duck',
-            LEAN_LEFT: 'Lean Left',
-            LEAN_RIGHT: 'Lean Right',
-            POSE_LOST: 'Pose Lost'
-        };
+    const POSE_STATES = {
+      IDLE: 'Idle',
+      POSE_LOST: 'Pose Lost'
+    };
 
-        const gameState = {
-            poseDetector: null,
-            videoElement: null,
-            currentPose: null,
-            isDetecting: false,
-            smoothedKeypoints: {}
-        };
+    const gameState = {
+      poseDetector: null,
+      videoElement: null,
+      currentPose: null,
+      isDetecting: false
+    };
 
-        async function initCamera() {
-            const video = document.getElementById('video');
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            video.srcObject = stream;
-            await new Promise(resolve => video.onloadedmetadata = resolve);
-            gameState.videoElement = video;
-            return video;
+    async function initCamera() {
+      const video = document.getElementById('video');
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.srcObject = stream;
+      await new Promise(resolve => (video.onloadedmetadata = resolve));
+      gameState.videoElement = video;
+      return video;
+    }
+
+    async function loadModel() {
+      await tf.ready();
+      const detectorConfig = {
+        modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
+      };
+      const detector = await poseDetection.createDetector(
+        poseDetection.SupportedModels.MoveNet,
+        detectorConfig
+      );
+      gameState.poseDetector = detector;
+      return true;
+    }
+
+    async function detectPose() {
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+
+      if (!gameState.poseDetector || !gameState.videoElement) return;
+
+      if (gameState.isDetecting) {
+        requestAnimationFrame(detectPose);
+        return;
+      }
+
+      gameState.isDetecting = true;
+
+      try {
+        const poses = await gameState.poseDetector.estimatePoses(gameState.videoElement);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        let interpretedPose = POSE_STATES.POSE_LOST;
+
+        if (poses && poses.length > 0 && poses[0].keypoints) {
+          drawKeypoints(ctx, poses[0].keypoints);
+          interpretedPose = POSE_STATES.IDLE; // You can add your logic here
         }
 
-        async function loadModel() {
-            await tf.ready();
-            const detectorConfig = {
-                modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
-            };
-            const detector = await poseDetection.createDetector(
-                poseDetection.SupportedModels.MoveNet,
-                detectorConfig
-            );
-            gameState.poseDetector = detector;
-            return true;
+        document.getElementById('pose').textContent = interpretedPose;
+        gameState.currentPose = interpretedPose;
+      } catch (error) {
+        console.error('Detection error:', error);
+      } finally {
+        gameState.isDetecting = false;
+        requestAnimationFrame(detectPose);
+      }
+    }
+
+    function drawKeypoints(ctx, keypoints) {
+      const minConfidence = CONFIG.minPoseConfidence;
+      keypoints.forEach(kp => {
+        if (kp.score >= minConfidence) {
+          ctx.beginPath();
+          ctx.arc(kp.x, kp.y, 6, 0, 2 * Math.PI);
+          ctx.fillStyle = 'red';
+          ctx.fill();
         }
+      });
+    }
 
-        async function detectPose() {
-            const canvas = document.getElementById('canvas');
-            const ctx = canvas.getContext('2d');
+    async function main() {
+      const modelLoaded = await loadModel();
+      if (!modelLoaded) return;
 
-            if (!gameState.poseDetector || !gameState.videoElement) return;
+      await initCamera();
+      detectPose();
+    }
 
-            if (gameState.isDetecting) {
-                requestAnimationFrame(detectPose);
-                return;
-            }
-
-            gameState.isDetecting = true;
-
-            try {
-                const poses = await gameState.poseDetector.estimatePoses(
-                    gameState.videoElement
-                );
-
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-                let interpretedPose = POSE_STATES.POSE_LOST;
-
-                if (poses && poses.length > 0 && poses[0].keypoints) {
-                    drawKeypoints(ctx, poses[0].keypoints);
-                    interpretedPose = POSE_STATES.IDLE; // Simplified for demo
-                }
-
-                document.getElementById('pose').textContent = interpretedPose;
-                gameState.currentPose = interpretedPose;
-            } catch (error) {
-                console.error('Detection error:', error);
-            } finally {
-                gameState.isDetecting = false;
-                requestAnimationFrame(detectPose);
-            }
-        }
-
-        function drawKeypoints(ctx, keypoints) {
-            const minConfidence = CONFIG.minPoseConfidence;
-            keypoints.forEach(kp => {
-                if (kp.score >= minConfidence) {
-                    ctx.beginPath();
-                    ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
-                    ctx.fillStyle = 'red';
-                    ctx.fill();
-                }
-            });
-        }
-
-        async function main() {
-            const modelLoaded = await loadModel();
-            if (!modelLoaded) return;
-
-            await initCamera();
-            detectPose();
-        }
-
-        main();
-    </script>
+    main();
+  </script>
 </body>
 </html>
