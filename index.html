@@ -51,7 +51,7 @@
 
   <script type="module">
     import * as tf from '@tensorflow/tfjs';
-    import { createDetector, SupportedModels, PoseDetector, util } from '@tensorflow-models/pose-detection';
+    import { createDetector, SupportedModels, poseDetection , util } from '@tensorflow-models/pose-detection';
 
     // ------------------------------------------------------------------------
     // 1) CONFIG & STATE
@@ -232,6 +232,7 @@
       const detector = await createDetector(SupportedModels.MoveNet, {
         modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
       });
+
 
       async function renderFrame() {
         // 1) estimate poses
