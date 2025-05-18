@@ -1,21 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Pose Detector</title>
+<script type="importmap">
+{
+"imports": {
+"@tensorflow/tfjs": "https://esm.sh/@tensorflow/tfjs@4.20.0",
+"@tensorflow-models/pose-detection": "https://cdn.skypack.dev/@tensorflow-models/pose-detection@2.1.3"
+}
+}
+</script>
+<style>
+body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-serif; }
+#poseText { font-size:4.5rem; text-align:center; padding:10px; }
+#container { position:relative; width:640px; margin:0 auto; }
+#video { width:100%; transform: scaleX(-1); }
+#overlay { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; transform: scaleX(-1); }
+</style>
+</head>
+<body>
+<div id="poseText">Loading…</div>
+<div id="container">
+<video id="video" autoplay playsinline></video>
+<canvas id="overlay"></canvas>
+</div>
+
 <script type="module">
   import * as tf from '@tensorflow/tfjs';
   import * as poseDetection from '@tensorflow-models/pose-detection';
 
-  // CONFIG & STATE
   const CONFIG = {
     minPoseConfidence: 0.3, 
     poseSmoothFactor: 0.8,
     minTorsoHeight: 30, 
     minShoulderWidth: 30,
-    torsoChangeThreshold: 0.2, // Threshold for torso height change that triggers recalibration
-    torsoHeightHistorySize: 10, // New: keep history for more stable comparisons
-    duckThresholdRatio: 2, // Changed to match your working version
+    torsoChangeThreshold: 0.2, 
+    torsoHeightHistorySize: 10, 
+    duckThresholdRatio: 2, 
     leanThresholdX: 0.15, 
     punchThresholdX: 0.3,
-    calibrationSampleCount: 30, // New: number of frames for initial calibration
+    calibrationSampleCount: 30, 
   };
-  
+
   const POSE_STATES = {
     IDLE: 'IDLE', 
     PUNCH_LEFT: 'PUNCH_LEFT', 
@@ -26,110 +53,104 @@
     POSE_INCOMPLETE: 'POSE_INCOMPLETE', 
     PUNCH_BOTH: 'PUNCH_BOTH', 
     POSE_LOST: 'POSE_LOST',
-    CALIBRATING: 'CALIBRATING' // New: indicate we're in calibration mode
+    CALIBRATING: 'CALIBRATING' 
   };
-  
+
   const essentialNames = [
     "nose", "left_shoulder", "right_shoulder", 
     "left_hip", "right_hip", "left_wrist", 
     "right_wrist", "left_elbow", "right_elbow"
   ];
-  
+
   let gameState = { 
     smoothedKeypoints: {}, 
     lastTorsoHeight: null, 
     standingNoseY: null, 
     ducking: false,
-    torsoHeightHistory: [], // New: to track recent torso heights
-    calibrationInProgress: true, // New: start with calibration
-    calibrationFrames: 0, // New: count calibration frames
-    recentTorsoHeights: [], // New: for initial calibration
-    stableFrameCount: 0, // New: count stable frames for pose confidence
+    torsoHeightHistory: [], 
+    calibrationInProgress: true, 
+    calibrationFrames: 0, 
+    recentTorsoHeights: [], 
+    stableFrameCount: 0, 
   };
 
   function _smoothAndGetKeypoint(name, map) {
     const kp = map[name]; 
     if(!kp) return null;
-    
+
     let sk = gameState.smoothedKeypoints[name];
     if(!sk) { 
       sk = {x: kp.x, y: kp.y, score: kp.score}; 
       gameState.smoothedKeypoints[name] = sk; 
       return sk; 
     }
-    
+
     const f = CONFIG.poseSmoothFactor;
     sk.x = f * sk.x + (1-f) * kp.x; 
     sk.y = f * sk.y + (1-f) * kp.y; 
     sk.score = kp.score;
     return sk;
   }
-  
+
   function _checkPunch(w, e, s, isLeft, shoulderMidY, shoulderWidth) {
     if(!w || !e || !s) return false;
-    
+
     const wristAhead = isLeft ? (w.x > e.x && e.x > s.x) : (w.x < e.x && e.x < s.x);
     if(!wristAhead) return false;
-    
+
     const seDist = Math.abs(s.x - e.x), 
           ewDist = Math.abs(e.x - w.x),
           alignedY = Math.abs(w.y - shoulderMidY) < shoulderWidth * 0.6;
-          
+
     return seDist > 5 && ewDist > CONFIG.punchThresholdX * seDist && alignedY;
   }
-  
-  // New function to check if a pose is stable
+
   function isPoseStable(torsoHeight, torsoHeightHistory) {
     if (torsoHeightHistory.length < 3) return false;
-    
+
     const recentAvg = torsoHeightHistory.slice(-3).reduce((sum, h) => sum + h, 0) / 3;
     const variance = torsoHeightHistory.slice(-3)
       .reduce((sum, h) => sum + Math.pow(h - recentAvg, 2), 0) / 3;
-    
-    // Return true if the pose has low variance (is stable)
-    return Math.sqrt(variance) < recentAvg * 0.05; // 5% standard deviation threshold
+
+    return Math.sqrt(variance) < recentAvg * 0.05; 
   }
-  
-  // New function to handle torso height calibration
+
   function calibrateTorsoHeight(torsoHeight) {
-    // Add to calibration samples
+
     if (torsoHeight > CONFIG.minTorsoHeight) {
       gameState.recentTorsoHeights.push(torsoHeight);
     }
-    
+
     gameState.calibrationFrames++;
-    
-    // If we have enough samples, finish calibration
+
     if (gameState.calibrationFrames >= CONFIG.calibrationSampleCount && 
         gameState.recentTorsoHeights.length >= CONFIG.calibrationSampleCount * 0.8) {
-      
-      // Sort and take median as our reference height (more robust than mean)
+
       const sortedHeights = [...gameState.recentTorsoHeights].sort((a, b) => a - b);
       gameState.lastTorsoHeight = sortedHeights[Math.floor(sortedHeights.length / 2)];
-      
-      // Initialize history with the stable value
+
       gameState.torsoHeightHistory = Array(CONFIG.torsoHeightHistorySize).fill(gameState.lastTorsoHeight);
       gameState.calibrationInProgress = false;
       return true;
     }
     return false;
   }
-  
+
   function interpretPose(keypoints) {
     if (!keypoints || keypoints.length === 0) return POSE_STATES.POSE_LOST;
-    
+
     const kpMap = Object.fromEntries(
       keypoints.filter(p => p.name && p.score >= CONFIG.minPoseConfidence)
                .map(p => [p.name, p])
     );
-    
+
     const present = essentialNames.filter(n => kpMap[n]);
     if (present.length === 0) return POSE_STATES.POSE_LOST;
     if (present.length < essentialNames.length) return POSE_STATES.POSE_INCOMPLETE;
 
     const es = {};
     for (let n of essentialNames) es[n] = _smoothAndGetKeypoint(n, kpMap);
-    
+
     const {
       nose, 
       left_shoulder: ls, 
@@ -149,79 +170,67 @@
           torsoHeight = Math.abs(shoulderMidY - hipMidY),
           shoulderWidth = Math.abs(ls.x - rs.x);
 
-    // If torso is too small, consider pose lost
     if (torsoHeight < CONFIG.minTorsoHeight || shoulderWidth < CONFIG.minShoulderWidth)
       return POSE_STATES.POSE_LOST;
-      
-    // Handle initial calibration
+
     if (gameState.calibrationInProgress) {
       if (calibrateTorsoHeight(torsoHeight)) {
         gameState.standingNoseY = nose.y;
       }
       return POSE_STATES.CALIBRATING;
     }
-    
-    // Update torso height history (for robust tracking)
+
     gameState.torsoHeightHistory.push(torsoHeight);
     if (gameState.torsoHeightHistory.length > CONFIG.torsoHeightHistorySize) {
       gameState.torsoHeightHistory.shift();
     }
-    
-    // Calculate median torso height from recent history (more robust than single frame)
+
     const sortedHeights = [...gameState.torsoHeightHistory].sort((a, b) => a - b);
     const medianTorsoHeight = sortedHeights[Math.floor(sortedHeights.length / 2)];
-    
-    // Check if torso height has significantly changed, indicating a need for recalibration
+
     if (gameState.lastTorsoHeight != null) {
       const relativeChange = Math.abs(medianTorsoHeight - gameState.lastTorsoHeight) / gameState.lastTorsoHeight;
-      
+
       if (relativeChange > CONFIG.torsoChangeThreshold && isPoseStable(torsoHeight, gameState.torsoHeightHistory)) {
-        // Recalibrate the reference pose
+
         gameState.lastTorsoHeight = medianTorsoHeight;
         gameState.standingNoseY = nose.y;
-        gameState.stableFrameCount = 0; // Reset stability counter after recalibration
+        gameState.stableFrameCount = 0; 
         console.log('Pose recalibrated - new torso height:', medianTorsoHeight);
       }
     } else {
-      // First valid measurement
+
       gameState.lastTorsoHeight = medianTorsoHeight;
     }
-    
-    // Initialize reference nose position if none exists
+
     if (!gameState.standingNoseY) gameState.standingNoseY = nose.y;
 
-    // Detect ducking based on head position relative to calibrated standing position
-    // This is using the duck detection logic from the working version
     const normalizedDrop = (nose.y - gameState.standingNoseY) / torsoHeight;
-    
+
     if (!gameState.ducking && normalizedDrop > CONFIG.duckThresholdRatio) {
       gameState.ducking = true; 
       return POSE_STATES.DUCK;
     }
-    
+
     if (gameState.ducking && normalizedDrop < CONFIG.duckThresholdRatio * 0.5) {
       gameState.ducking = false;
     }
-    
+
     if (gameState.ducking) return POSE_STATES.DUCK;
 
-    // Detect leaning based on shoulder-hip horizontal displacement
-    // Normalize by torso height instead of shoulder width for consistency
     const leanOffset = shoulderMidX - hipMidX;
     const leanThresh = CONFIG.leanThresholdX * gameState.lastTorsoHeight;
-    
+
     if (leanOffset > leanThresh) return POSE_STATES.LEAN_LEFT;
     if (leanOffset < -leanThresh) return POSE_STATES.LEAN_RIGHT;
 
-    // Detect punches
     const leftPunch = _checkPunch(lw, le, ls, true, shoulderMidY, gameState.lastTorsoHeight);
     const rightPunch = _checkPunch(rw, re, rs, false, shoulderMidY, gameState.lastTorsoHeight);
-    
+
     if (leftPunch && rightPunch) return POSE_STATES.PUNCH_BOTH;
     if (leftPunch) return POSE_STATES.PUNCH_LEFT;
     if (rightPunch) return POSE_STATES.PUNCH_RIGHT;
 
-    // If no specific pose detected, return idle
     return POSE_STATES.IDLE;
   }
 
@@ -229,34 +238,30 @@
     ctx.fillStyle = 'lime'; 
     ctx.strokeStyle = 'yellow'; 
     ctx.lineWidth = 2;
-    
-    // Draw keypoints
+
     for (let n of essentialNames) {
       const kp = gameState.smoothedKeypoints[n];
       if (!kp || kp.score < CONFIG.minPoseConfidence) continue;
-      
+
       ctx.beginPath();
       ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
       ctx.fill(); 
       ctx.stroke();
     }
-    
-    // Optionally draw additional debug information
+
     if (gameState.lastTorsoHeight && 
         gameState.smoothedKeypoints.left_shoulder && 
         gameState.smoothedKeypoints.left_hip) {
-      
+
       const ls = gameState.smoothedKeypoints.left_shoulder;
       const lh = gameState.smoothedKeypoints.left_hip;
-      
-      // Draw torso height reference line
+
       ctx.beginPath();
       ctx.moveTo(ls.x - 20, ls.y);
       ctx.lineTo(ls.x - 20, ls.y + gameState.lastTorsoHeight);
       ctx.strokeStyle = 'cyan';
       ctx.stroke();
-      
-      // Show calibration text if in progress
+
       if (gameState.calibrationInProgress) {
         ctx.fillStyle = 'white';
         ctx.font = '16px Arial';
@@ -267,7 +272,7 @@
   }
 
   async function main() {
-    // Ensure TF backend is ready
+
     await tf.setBackend('webgl'); 
     await tf.ready();
     console.log('TF backend:', tf.getBackend());
@@ -289,21 +294,20 @@
       poseDetection.SupportedModels.MoveNet,
       {modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING}
     );
-    
+
     poseText.innerText = 'Ready! Stand in T-pose to calibrate.';
 
     async function frameLoop() {
       const poses = await detector.estimatePoses(video);
       const state = interpretPose(poses[0]?.keypoints || []);
-      
-      // Update UI with pose state
+
       poseText.innerText = state;
-      
+
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawKeypoints(ctx);
       requestAnimationFrame(frameLoop);
     }
-    
+
     frameLoop();
   }
 
@@ -312,3 +316,5 @@
     document.getElementById('poseText').innerText = 'Error: ' + e.message;
   });
   </script>
+</body>
+</html>
