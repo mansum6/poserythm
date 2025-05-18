@@ -1,32 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Pose Detector</title>
-  <script type="importmap">
-  {
-    "imports": {
-      "@tensorflow/tfjs": "https://esm.sh/@tensorflow/tfjs@4.20.0",
-      "@tensorflow-models/pose-detection": "https://cdn.skypack.dev/@tensorflow-models/pose-detection@2.1.3"
-    }
-  }
-  </script>
-  <style>
-    body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-serif; }
-    #poseText { font-size:4.5rem; text-align:center; padding:10px; }
-    #container { position:relative; width:640px; margin:0 auto; }
-    #video { width:100%; transform: scaleX(-1); }
-    #overlay { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; transform: scaleX(-1); }
-  </style>
-</head>
-<body>
-  <div id="poseText">Loading…</div>
-  <div id="container">
-    <video id="video" autoplay playsinline></video>
-    <canvas id="overlay"></canvas>
-  </div>
-
-  <script type="module">
+<script type="module">
   import * as tf from '@tensorflow/tfjs';
   import * as poseDetection from '@tensorflow-models/pose-detection';
 
@@ -38,7 +10,7 @@
     minShoulderWidth: 30,
     torsoChangeThreshold: 0.2, // Threshold for torso height change that triggers recalibration
     torsoHeightHistorySize: 10, // New: keep history for more stable comparisons
-    duckThresholdRatio: 2,
+    duckThresholdRatio: 2, // Changed to match your working version
     leanThresholdX: 0.15, 
     punchThresholdX: 0.3,
     calibrationSampleCount: 30, // New: number of frames for initial calibration
@@ -219,8 +191,8 @@
     if (!gameState.standingNoseY) gameState.standingNoseY = nose.y;
 
     // Detect ducking based on head position relative to calibrated standing position
-    // Use torso height for normalization instead of shoulder width
-    const normalizedDrop = (nose.y - gameState.standingNoseY) / gameState.lastTorsoHeight;
+    // This is using the duck detection logic from the working version
+    const normalizedDrop = (nose.y - gameState.standingNoseY) / torsoHeight;
     
     if (!gameState.ducking && normalizedDrop > CONFIG.duckThresholdRatio) {
       gameState.ducking = true; 
@@ -324,11 +296,8 @@
       const poses = await detector.estimatePoses(video);
       const state = interpretPose(poses[0]?.keypoints || []);
       
-      // Update UI with pose state and additional info
+      // Update UI with pose state
       poseText.innerText = state;
-      if (gameState.lastTorsoHeight && !gameState.calibrationInProgress) {
-        poseText.innerText += ` (Torso Height: ${gameState.lastTorsoHeight.toFixed(1)})`;
-      }
       
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawKeypoints(ctx);
@@ -343,5 +312,3 @@
     document.getElementById('poseText').innerText = 'Error: ' + e.message;
   });
   </script>
-</body>
-</html>
