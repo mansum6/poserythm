@@ -13,10 +13,45 @@
 </script>
 <style>
 body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-serif; }
-#poseText { font-size:4.5rem; text-align:center; padding:10px; }
-#container { position:relative; width:640px; margin:0 auto; }
-#video { width:100%; transform: scaleX(-1); }
+#poseText { font-size:4.5rem; text-align:center; padding:10px; min-height: 1.5em; /* Ensure space */}
+#container { position:relative; width:640px; height: 480px; margin:0 auto; border: 1px solid #444;}
+#video { width:100%; height:100%; transform: scaleX(-1); object-fit: cover;}
 #overlay { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; transform: scaleX(-1); }
+
+#controlsContainer {
+    padding: 15px;
+    margin: 20px auto; /* Center it */
+    border: 1px solid #555;
+    border-radius: 8px;
+    background-color: #333;
+    color: #fff;
+    width: fit-content; /* Adjust to content size */
+    max-width: 600px; /* Max width */
+}
+#controlsContainer h3 { margin-top: 0; margin-bottom: 15px; text-align: center; }
+#controlsContainer div { margin-bottom: 10px; display: flex; align-items: center; flex-wrap: wrap; }
+#controlsContainer label { margin-right: 10px; min-width: 220px; /* Align inputs */ }
+#controlsContainer select, #controlsContainer input[type="number"] {
+    padding: 8px;
+    margin-right: 10px;
+    border: 1px solid #555;
+    background-color: #444;
+    color: #fff;
+    border-radius: 4px;
+    flex-grow: 1;
+}
+#controlsContainer input[type="number"] { width: 100px; max-width:120px; flex-grow: 0;}
+#controlsContainer button {
+    padding: 8px 15px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: auto; /* Pushes button to the right if space allows */
+}
+#controlsContainer button:hover { background-color: #0056b3; }
+#configStatus { font-size: 0.9em; min-height: 1em; margin-top: 10px; text-align: center; }
 </style>
 </head>
 <body>
@@ -26,21 +61,35 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
 <canvas id="overlay"></canvas>
 </div>
 
+<div id="controlsContainer">
+  <h3>Adjust Configuration</h3>
+  <div>
+    <label for="configVarSelect">Variable:</label>
+    <select id="configVarSelect"></select>
+  </div>
+  <div>
+    <label for="configVarInput">Value:</label>
+    <input type="number" id="configVarInput"> <!-- Step will be set by JS -->
+    <button id="applyConfigBtn">Apply</button>
+  </div>
+  <p id="configStatus"></p>
+</div>
+
 <script type="module">
   import * as tf from '@tensorflow/tfjs';
   import * as poseDetection from '@tensorflow-models/pose-detection';
 
   // CONFIG & STATE
   const CONFIG = {
-    minPoseConfidence: 0.3,
-    poseSmoothFactor: 0.8,
-    minTorsoHeight: 30,
-    minShoulderWidth: 30,
-    torsoChangeThreshold: 0.05,
-    duckThresholdRatio: 1,
-    leanThresholdX: 0.15,
-    punchThresholdX: 0.3,
-    temporarilyIncompleteDurationMs: 500, // How long to wait before POSE_TEMPORARILY_INCOMPLETE becomes POSE_INCOMPLETE
+    minPoseConfidence: 0.3,    // float
+    poseSmoothFactor: 0.8,     // float
+    minTorsoHeight: 30,        // integer
+    minShoulderWidth: 30,      // integer
+    torsoChangeThreshold: 0.05,// float (as per your last setting)
+    duckThresholdRatio: 1,     // float (as per your last setting, consider increasing if ducks are too easy)
+    leanThresholdX: 0.15,      // float
+    punchThresholdX: 0.3,      // float
+    temporarilyIncompleteDurationMs: 500, // integer
   };
 
   const POSE_STATES = {
@@ -50,7 +99,7 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
     LEAN_LEFT: 'LEAN_LEFT',
     LEAN_RIGHT: 'LEAN_RIGHT',
     DUCK: 'DUCK',
-    POSE_TEMPORARILY_INCOMPLETE: 'POSE_TEMPORARILY_INCOMPLETE', // New state
+    POSE_TEMPORARILY_INCOMPLETE: 'POSE_TEMPORARILY_INCOMPLETE',
     POSE_INCOMPLETE: 'POSE_INCOMPLETE',
     PUNCH_BOTH: 'PUNCH_BOTH',
     POSE_LOST: 'POSE_LOST'
@@ -62,12 +111,15 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
     "right_wrist", "left_elbow", "right_elbow"
   ];
 
+  // Helper array to determine input step for config UI
+  const integerConfigVars = ['minTorsoHeight', 'minShoulderWidth', 'temporarilyIncompleteDurationMs'];
+
   let gameState = {
     smoothedKeypoints: {},
     lastTorsoHeight: null,
     standingNoseY: null,
     ducking: false,
-    temporarilyIncompleteEntryTime: 0, // Timestamp for when POSE_TEMPORARILY_INCOMPLETE began
+    temporarilyIncompleteEntryTime: 0,
   };
 
   function _smoothAndGetKeypoint(name, map) {
@@ -103,7 +155,7 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
 
   function interpretPose(keypoints) {
     if (!keypoints || keypoints.length === 0) {
-      gameState.temporarilyIncompleteEntryTime = 0; // Reset timer on pose lost
+      gameState.temporarilyIncompleteEntryTime = 0;
       return POSE_STATES.POSE_LOST;
     }
 
@@ -116,48 +168,32 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
 
     if (!essentialKeypointsPresent) {
       if (gameState.temporarilyIncompleteEntryTime === 0) {
-        // Not in temporary state yet, enter it
         gameState.temporarilyIncompleteEntryTime = performance.now();
         return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
       } else {
-        // Already in temporary state, check timer
         if (performance.now() - gameState.temporarilyIncompleteEntryTime < CONFIG.temporarilyIncompleteDurationMs) {
           return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
         } else {
-          // Timer expired, transition to full POSE_INCOMPLETE
-          // Do not reset timer here; it will reset when a valid pose is found
           return POSE_STATES.POSE_INCOMPLETE;
         }
       }
     }
 
-    // If we reach here, all essential keypoints are present.
-    // Reset the temporary incomplete timer as we have a potentially complete pose.
     gameState.temporarilyIncompleteEntryTime = 0;
 
     const es = {};
     for (let n of essentialNames) es[n] = _smoothAndGetKeypoint(n, kpMap);
 
     const {
-      nose,
-      left_shoulder: ls,
-      right_shoulder: rs,
-      left_hip: lh,
-      right_hip: rh,
-      left_wrist: lw,
-      right_wrist: rw,
-      left_elbow: le,
-      right_elbow: re
+      nose, left_shoulder: ls, right_shoulder: rs,
+      left_hip: lh, right_hip: rh,
+      left_wrist: lw, right_wrist: rw,
+      left_elbow: le, right_elbow: re
     } = es;
 
-    // Ensure all destructured essential keypoints are valid (they should be if essentialKeypointsPresent is true)
     if (!nose || !ls || !rs || !lh || !rh || !lw || !rw || !le || !re) {
-        // This case should ideally not be hit if essentialKeypointsPresent is true
-        // and _smoothAndGetKeypoint doesn't return null for present keys.
-        // However, as a safeguard:
-        return POSE_STATES.POSE_INCOMPLETE; // Or POSE_LOST
+        return POSE_STATES.POSE_INCOMPLETE;
     }
-
 
     const shoulderMidY = (ls.y + rs.y) / 2,
           shoulderMidX = (ls.x + rs.x) / 2,
@@ -167,37 +203,46 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
           shoulderWidth = Math.abs(ls.x - rs.x);
 
     if (torsoHeight < CONFIG.minTorsoHeight || shoulderWidth < CONFIG.minShoulderWidth) {
-      return POSE_STATES.POSE_LOST; // Also resets temp timer implicitly as it's a new pose
+      return POSE_STATES.POSE_LOST;
     }
 
-    // ---- DUCK LOGIC MODIFICATION for "sticky duck" ----
+    // ---- DUCK LOGIC REVISION ----
     const torsoChangedSignificantly = gameState.lastTorsoHeight != null &&
         Math.abs(torsoHeight - gameState.lastTorsoHeight) / gameState.lastTorsoHeight > CONFIG.torsoChangeThreshold;
 
-    // Update standingNoseY:
-    // 1. If it's not initialized yet.
-    // 2. Or if torso changed significantly AND we are not currently in a ducking state.
-    if (!gameState.standingNoseY || (torsoChangedSignificantly && !gameState.ducking)) {
+    // Update standingNoseY and potentially ducking state:
+    // 1. If standingNoseY is not initialized.
+    // 2. Or if torso size changed significantly (user moved closer/further).
+    //    In this case, assume the user is standing at the new distance, so reset standingNoseY.
+    //    Also, critically, reset ducking state as the reference point has changed.
+    if (!gameState.standingNoseY || torsoChangedSignificantly) {
       gameState.standingNoseY = nose.y;
+      if (torsoChangedSignificantly) {
+        gameState.ducking = false; // Reset ducking if distance changed
+      }
     }
+    // Update lastTorsoHeight for the *next* frame's torsoChangedSignificantly calculation.
     gameState.lastTorsoHeight = torsoHeight;
 
+    // DUCK DETECTION
+    // normalizedDrop uses the (potentially just updated) standingNoseY.
     const normalizedDrop = gameState.standingNoseY && torsoHeight > 0 ? (nose.y - gameState.standingNoseY) / torsoHeight : 0;
 
+    // Enter duck state: User was not ducking, and nose drop is significant.
     if (!gameState.ducking && gameState.standingNoseY && normalizedDrop > CONFIG.duckThresholdRatio) {
-      gameState.ducking = true;
-      return POSE_STATES.DUCK;
+        gameState.ducking = true;
+    }
+    // Exit duck state: User was ducking, and nose drop is no longer significant.
+    else if (gameState.ducking && gameState.standingNoseY && normalizedDrop < CONFIG.duckThresholdRatio * 0.5) {
+        gameState.ducking = false;
+        gameState.standingNoseY = nose.y; // Recalibrate to current nose Y when standing up from a duck
     }
 
-    if (gameState.ducking && gameState.standingNoseY && normalizedDrop < CONFIG.duckThresholdRatio * 0.5) {
-      gameState.ducking = false;
-      // gameState.ducking is now false. The function will continue to detect other poses (lean, punch, idle) for this frame.
-    }
-
+    // If, after all checks, we are in a duck state, return DUCK
     if (gameState.ducking) {
-      return POSE_STATES.DUCK;
+        return POSE_STATES.DUCK;
     }
-    // ---- END DUCK LOGIC MODIFICATION ----
+    // ---- END DUCK LOGIC REVISION ----
 
 
     const leanOffset = shoulderMidX - hipMidX;
@@ -221,6 +266,8 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
     ctx.strokeStyle = 'yellow';
     ctx.lineWidth = 2;
 
+    // Draw smoothed keypoints
+    // Since both video and overlay are scaledX(-1), raw coordinates should work
     for (let n of essentialNames) {
       const kp = gameState.smoothedKeypoints[n];
       if (!kp || kp.score < CONFIG.minPoseConfidence) continue;
@@ -230,6 +277,63 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
       ctx.fill();
       ctx.stroke();
     }
+  }
+
+  function setupConfigControls() {
+    const varSelect = document.getElementById('configVarSelect');
+    const varInput = document.getElementById('configVarInput');
+    const applyBtn = document.getElementById('applyConfigBtn');
+    const statusP = document.getElementById('configStatus');
+
+    // Populate dropdown
+    Object.keys(CONFIG).forEach(varName => {
+      const option = document.createElement('option');
+      option.value = varName;
+      option.textContent = varName;
+      varSelect.appendChild(option);
+    });
+
+    function updateInputForSelectedVar() {
+        const selectedVar = varSelect.value;
+        varInput.value = CONFIG[selectedVar];
+        if (integerConfigVars.includes(selectedVar)) {
+            varInput.step = "1";
+        } else {
+            // For floats, a smaller step is usually better
+            varInput.step = (selectedVar === 'minPoseConfidence' || selectedVar === 'poseSmoothFactor' || selectedVar === 'torsoChangeThreshold') ? "0.01" : "0.1";
+        }
+        statusP.textContent = ''; // Clear status on var change
+    }
+
+    varSelect.value = 'torsoChangeThreshold'; // Default as requested
+    updateInputForSelectedVar(); // Initialize input field
+
+    varSelect.addEventListener('change', updateInputForSelectedVar);
+
+    applyBtn.addEventListener('click', () => {
+      const selectedVar = varSelect.value;
+      const newValueStr = varInput.value;
+      let newValue;
+
+      if (integerConfigVars.includes(selectedVar)) {
+        newValue = parseInt(newValueStr, 10);
+      } else {
+        newValue = parseFloat(newValueStr);
+      }
+
+      if (isNaN(newValue)) {
+        statusP.textContent = `Error: Invalid number for ${selectedVar}.`;
+        statusP.style.color = 'red';
+        varInput.value = CONFIG[selectedVar]; // Reset to current valid value
+        return;
+      }
+
+      CONFIG[selectedVar] = newValue;
+      // varInput.value = CONFIG[selectedVar]; // Reflect the potentially parsed/corrected value
+      statusP.textContent = `${selectedVar} updated to ${CONFIG[selectedVar]}.`;
+      statusP.style.color = '#7f7'; // Light green for dark background
+      console.log('CONFIG updated:', JSON.parse(JSON.stringify(CONFIG)));
+    });
   }
 
   async function main() {
@@ -242,13 +346,20 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
           ctx = canvas.getContext('2d'),
           poseText = document.getElementById('poseText');
 
+    setupConfigControls(); // Initialize the UI controls
+
     const stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
     video.srcObject = stream;
-    await new Promise(r => video.onloadedmetadata = r);
+    await new Promise(r => video.onloadedmetadata = r); // Wait for metadata
     video.play();
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    // Match canvas size to video element size (which might be different from video stream size if object-fit is used)
+    canvas.width = video.clientWidth;
+    canvas.height = video.clientHeight;
+    // If you want canvas resolution to match video intrinsic resolution:
+    // canvas.width = video.videoWidth;
+    // canvas.height = video.videoHeight;
+
 
     const detector = await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
@@ -258,18 +369,23 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
     poseText.innerText = 'Ready!';
 
     async function frameLoop() {
+      // Ensure canvas size is updated if video element resizes (e.g. responsive design)
+      if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+          canvas.width = video.clientWidth;
+          canvas.height = video.clientHeight;
+      }
+
+      // Pass the video element. flipHorizontal is false by default for movenet.
+      // The mirroring is handled by CSS transform on the video and canvas elements.
       const poses = await detector.estimatePoses(video);
       const estimatedState = interpretPose(poses[0]?.keypoints || []);
 
-      // Update UI with pose state, but NOT for POSE_TEMPORARILY_INCOMPLETE
       if (estimatedState !== POSE_STATES.POSE_TEMPORARILY_INCOMPLETE) {
         poseText.innerText = estimatedState;
       }
-      // If estimatedState is POSE_TEMPORARILY_INCOMPLETE, poseText is not updated,
-      // effectively showing the last non-temporary state.
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (poses[0]?.keypoints) { // Only draw if keypoints exist
+      if (poses[0]?.keypoints) {
           drawKeypoints(ctx);
       }
       requestAnimationFrame(frameLoop);
@@ -282,5 +398,6 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
     console.error(e);
     document.getElementById('poseText').innerText = 'Error: ' + e.message;
   });
-  </script></body>
+  </script>
+</body>
 </html>
