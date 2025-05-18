@@ -32,175 +32,208 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
 
   // CONFIG & STATE
   const CONFIG = {
-    minPoseConfidence: 0.3, 
+    minPoseConfidence: 0.3,
     poseSmoothFactor: 0.8,
-    minTorsoHeight: 30, 
+    minTorsoHeight: 30,
     minShoulderWidth: 30,
     torsoChangeThreshold: 0.2,
-    duckThresholdRatio: 2, // Fixed duck threshold from working version
-    leanThresholdX: 0.15, 
+    duckThresholdRatio: 2,
+    leanThresholdX: 0.15,
     punchThresholdX: 0.3,
+    temporarilyIncompleteDurationMs: 500, // How long to wait before POSE_TEMPORARILY_INCOMPLETE becomes POSE_INCOMPLETE
   };
-  
+
   const POSE_STATES = {
-    IDLE: 'IDLE', 
-    PUNCH_LEFT: 'PUNCH_LEFT', 
+    IDLE: 'IDLE',
+    PUNCH_LEFT: 'PUNCH_LEFT',
     PUNCH_RIGHT: 'PUNCH_RIGHT',
-    LEAN_LEFT: 'LEAN_LEFT', 
-    LEAN_RIGHT: 'LEAN_RIGHT', 
+    LEAN_LEFT: 'LEAN_LEFT',
+    LEAN_RIGHT: 'LEAN_RIGHT',
     DUCK: 'DUCK',
-    POSE_INCOMPLETE: 'POSE_INCOMPLETE', 
-    PUNCH_BOTH: 'PUNCH_BOTH', 
+    POSE_TEMPORARILY_INCOMPLETE: 'POSE_TEMPORARILY_INCOMPLETE', // New state
+    POSE_INCOMPLETE: 'POSE_INCOMPLETE',
+    PUNCH_BOTH: 'PUNCH_BOTH',
     POSE_LOST: 'POSE_LOST'
   };
-  
+
   const essentialNames = [
-    "nose", "left_shoulder", "right_shoulder", 
-    "left_hip", "right_hip", "left_wrist", 
+    "nose", "left_shoulder", "right_shoulder",
+    "left_hip", "right_hip", "left_wrist",
     "right_wrist", "left_elbow", "right_elbow"
   ];
-  
-  let gameState = { 
-    smoothedKeypoints: {}, 
-    lastTorsoHeight: null, 
-    standingNoseY: null, 
-    ducking: false
+
+  let gameState = {
+    smoothedKeypoints: {},
+    lastTorsoHeight: null,
+    standingNoseY: null,
+    ducking: false,
+    temporarilyIncompleteEntryTime: 0, // Timestamp for when POSE_TEMPORARILY_INCOMPLETE began
   };
 
   function _smoothAndGetKeypoint(name, map) {
-    const kp = map[name]; 
+    const kp = map[name];
     if(!kp) return null;
-    
+
     let sk = gameState.smoothedKeypoints[name];
-    if(!sk) { 
-      sk = {x: kp.x, y: kp.y, score: kp.score}; 
-      gameState.smoothedKeypoints[name] = sk; 
-      return sk; 
+    if(!sk) {
+      sk = {x: kp.x, y: kp.y, score: kp.score};
+      gameState.smoothedKeypoints[name] = sk;
+      return sk;
     }
-    
+
     const f = CONFIG.poseSmoothFactor;
-    sk.x = f * sk.x + (1-f) * kp.x; 
-    sk.y = f * sk.y + (1-f) * kp.y; 
+    sk.x = f * sk.x + (1-f) * kp.x;
+    sk.y = f * sk.y + (1-f) * kp.y;
     sk.score = kp.score;
     return sk;
   }
-  
+
   function _checkPunch(w, e, s, isLeft, shoulderMidY, shoulderWidth) {
     if(!w || !e || !s) return false;
-    
+
     const wristAhead = isLeft ? (w.x > e.x && e.x > s.x) : (w.x < e.x && e.x < s.x);
     if(!wristAhead) return false;
-    
-    const seDist = Math.abs(s.x - e.x), 
+
+    const seDist = Math.abs(s.x - e.x),
           ewDist = Math.abs(e.x - w.x),
           alignedY = Math.abs(w.y - shoulderMidY) < shoulderWidth * 0.6;
-          
+
     return seDist > 5 && ewDist > CONFIG.punchThresholdX * seDist && alignedY;
   }
-  
-  // New: Custom functions have been removed to simplify the code
-  
+
   function interpretPose(keypoints) {
-    if (!keypoints || keypoints.length === 0) return POSE_STATES.POSE_LOST;
-    
+    if (!keypoints || keypoints.length === 0) {
+      gameState.temporarilyIncompleteEntryTime = 0; // Reset timer on pose lost
+      return POSE_STATES.POSE_LOST;
+    }
+
     const kpMap = Object.fromEntries(
       keypoints.filter(p => p.name && p.score >= CONFIG.minPoseConfidence)
                .map(p => [p.name, p])
     );
-    
-    const present = essentialNames.filter(n => kpMap[n]);
-    if (present.length === 0) return POSE_STATES.POSE_LOST;
-    if (present.length < essentialNames.length) return POSE_STATES.POSE_INCOMPLETE;
+
+    const essentialKeypointsPresent = essentialNames.every(n => kpMap[n]);
+
+    if (!essentialKeypointsPresent) {
+      if (gameState.temporarilyIncompleteEntryTime === 0) {
+        // Not in temporary state yet, enter it
+        gameState.temporarilyIncompleteEntryTime = performance.now();
+        return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
+      } else {
+        // Already in temporary state, check timer
+        if (performance.now() - gameState.temporarilyIncompleteEntryTime < CONFIG.temporarilyIncompleteDurationMs) {
+          return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
+        } else {
+          // Timer expired, transition to full POSE_INCOMPLETE
+          // Do not reset timer here; it will reset when a valid pose is found
+          return POSE_STATES.POSE_INCOMPLETE;
+        }
+      }
+    }
+
+    // If we reach here, all essential keypoints are present.
+    // Reset the temporary incomplete timer as we have a potentially complete pose.
+    gameState.temporarilyIncompleteEntryTime = 0;
 
     const es = {};
     for (let n of essentialNames) es[n] = _smoothAndGetKeypoint(n, kpMap);
-    
+
     const {
-      nose, 
-      left_shoulder: ls, 
-      right_shoulder: rs, 
-      left_hip: lh, 
+      nose,
+      left_shoulder: ls,
+      right_shoulder: rs,
+      left_hip: lh,
       right_hip: rh,
-      left_wrist: lw, 
-      right_wrist: rw, 
-      left_elbow: le, 
+      left_wrist: lw,
+      right_wrist: rw,
+      left_elbow: le,
       right_elbow: re
     } = es;
 
-    const shoulderMidY = (ls.y + rs.y) / 2, 
+    // Ensure all destructured essential keypoints are valid (they should be if essentialKeypointsPresent is true)
+    if (!nose || !ls || !rs || !lh || !rh || !lw || !rw || !le || !re) {
+        // This case should ideally not be hit if essentialKeypointsPresent is true
+        // and _smoothAndGetKeypoint doesn't return null for present keys.
+        // However, as a safeguard:
+        return POSE_STATES.POSE_INCOMPLETE; // Or POSE_LOST
+    }
+
+
+    const shoulderMidY = (ls.y + rs.y) / 2,
           shoulderMidX = (ls.x + rs.x) / 2,
-          hipMidY = (lh.y + rh.y) / 2, 
+          hipMidY = (lh.y + rh.y) / 2,
           hipMidX = (lh.x + rh.x) / 2,
           torsoHeight = Math.abs(shoulderMidY - hipMidY),
           shoulderWidth = Math.abs(ls.x - rs.x);
 
-    // If torso is too small, consider pose lost
-    if (torsoHeight < CONFIG.minTorsoHeight || shoulderWidth < CONFIG.minShoulderWidth)
-      return POSE_STATES.POSE_LOST;
-      
-    // Check if torso height has significantly changed, indicating a need for recalibration
-    if (gameState.lastTorsoHeight != null &&
-        Math.abs(torsoHeight - gameState.lastTorsoHeight) / gameState.lastTorsoHeight > CONFIG.torsoChangeThreshold) {
+    if (torsoHeight < CONFIG.minTorsoHeight || shoulderWidth < CONFIG.minShoulderWidth) {
+      return POSE_STATES.POSE_LOST; // Also resets temp timer implicitly as it's a new pose
+    }
+
+    // ---- DUCK LOGIC MODIFICATION for "sticky duck" ----
+    const torsoChangedSignificantly = gameState.lastTorsoHeight != null &&
+        Math.abs(torsoHeight - gameState.lastTorsoHeight) / gameState.lastTorsoHeight > CONFIG.torsoChangeThreshold;
+
+    // Update standingNoseY:
+    // 1. If it's not initialized yet.
+    // 2. Or if torso changed significantly AND we are not currently in a ducking state.
+    if (!gameState.standingNoseY || (torsoChangedSignificantly && !gameState.ducking)) {
       gameState.standingNoseY = nose.y;
     }
     gameState.lastTorsoHeight = torsoHeight;
-    
-    // Initialize reference nose position if none exists
-    if (!gameState.standingNoseY) gameState.standingNoseY = nose.y;
 
-    // *** DUCK DETECTION - direct from original code ***
-    const normalizedDrop = (nose.y - gameState.standingNoseY) / torsoHeight;
-    
-    if (!gameState.ducking && normalizedDrop > CONFIG.duckThresholdRatio) {
-      gameState.ducking = true; 
+    const normalizedDrop = gameState.standingNoseY && torsoHeight > 0 ? (nose.y - gameState.standingNoseY) / torsoHeight : 0;
+
+    if (!gameState.ducking && gameState.standingNoseY && normalizedDrop > CONFIG.duckThresholdRatio) {
+      gameState.ducking = true;
       return POSE_STATES.DUCK;
     }
-    
-    if (gameState.ducking && normalizedDrop < CONFIG.duckThresholdRatio * 0.5) {
-      gameState.ducking = false;
-    }
-    
-    if (gameState.ducking) return POSE_STATES.DUCK;
 
-    // Detect leaning based on shoulder-hip horizontal displacement
+    if (gameState.ducking && gameState.standingNoseY && normalizedDrop < CONFIG.duckThresholdRatio * 0.5) {
+      gameState.ducking = false;
+      // gameState.ducking is now false. The function will continue to detect other poses (lean, punch, idle) for this frame.
+    }
+
+    if (gameState.ducking) {
+      return POSE_STATES.DUCK;
+    }
+    // ---- END DUCK LOGIC MODIFICATION ----
+
+
     const leanOffset = shoulderMidX - hipMidX;
     const leanThresh = CONFIG.leanThresholdX * shoulderWidth;
-    
+
     if (leanOffset > leanThresh) return POSE_STATES.LEAN_LEFT;
     if (leanOffset < -leanThresh) return POSE_STATES.LEAN_RIGHT;
 
-    // Detect punches
     const leftPunch = _checkPunch(lw, le, ls, true, shoulderMidY, shoulderWidth);
     const rightPunch = _checkPunch(rw, re, rs, false, shoulderMidY, shoulderWidth);
-    
+
     if (leftPunch && rightPunch) return POSE_STATES.PUNCH_BOTH;
     if (leftPunch) return POSE_STATES.PUNCH_LEFT;
     if (rightPunch) return POSE_STATES.PUNCH_RIGHT;
 
-    // If no specific pose detected, return idle
     return POSE_STATES.IDLE;
   }
 
   function drawKeypoints(ctx) {
-    ctx.fillStyle = 'lime'; 
-    ctx.strokeStyle = 'yellow'; 
+    ctx.fillStyle = 'lime';
+    ctx.strokeStyle = 'yellow';
     ctx.lineWidth = 2;
-    
-    // Draw keypoints
+
     for (let n of essentialNames) {
       const kp = gameState.smoothedKeypoints[n];
       if (!kp || kp.score < CONFIG.minPoseConfidence) continue;
-      
+
       ctx.beginPath();
       ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
-      ctx.fill(); 
+      ctx.fill();
       ctx.stroke();
     }
   }
 
   async function main() {
-    // Ensure TF backend is ready
-    await tf.setBackend('webgl'); 
+    await tf.setBackend('webgl');
     await tf.ready();
     console.log('TF backend:', tf.getBackend());
 
@@ -221,21 +254,27 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
       poseDetection.SupportedModels.MoveNet,
       {modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING}
     );
-    
+
     poseText.innerText = 'Ready!';
 
     async function frameLoop() {
       const poses = await detector.estimatePoses(video);
-      const state = interpretPose(poses[0]?.keypoints || []);
-      
-      // Update UI with pose state
-      poseText.innerText = state;
-      
+      const estimatedState = interpretPose(poses[0]?.keypoints || []);
+
+      // Update UI with pose state, but NOT for POSE_TEMPORARILY_INCOMPLETE
+      if (estimatedState !== POSE_STATES.POSE_TEMPORARILY_INCOMPLETE) {
+        poseText.innerText = estimatedState;
+      }
+      // If estimatedState is POSE_TEMPORARILY_INCOMPLETE, poseText is not updated,
+      // effectively showing the last non-temporary state.
+
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawKeypoints(ctx);
+      if (poses[0]?.keypoints) { // Only draw if keypoints exist
+          drawKeypoints(ctx);
+      }
       requestAnimationFrame(frameLoop);
     }
-    
+
     frameLoop();
   }
 
