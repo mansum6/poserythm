@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MoveNet Pose Detector</title>
+  <style>
+    body, html { 
+      margin: 0; 
+      height: 100%; 
+      display: flex; 
+      flex-direction: column;
+      font-family: Arial, sans-serif;
+      background-color: #f0f0f0;
+    }
+    #poseDisplay { 
+      flex: 0 0 20%; 
+      font-size: 4em; 
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background-color: #333;
+      color: #fff;
+      margin: 0;
+      font-weight: bold;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }
+    #videoContainer { 
+      flex: 0 0 40%; 
+      position: relative;
+      display: flex;
+      justify-content: center;
+      background-color: #222;
+    }
+    #webcam, #overlay {
+      height: 100%;
+      max-height: 100%;
+      position: absolute;
+    }
+    #overlay {
+      z-index: 10;
+    }
+    #controls { 
+      flex: 0 0 40%; 
+      padding: 1em; 
+      overflow: auto;
+      background-color: #fff;
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+    }
+    .control-group {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      grid-gap: 15px;
+      margin-bottom: 20px;
+    }
+    .control-item {
+      display: flex;
+      flex-direction: column;
+    }
+    .control-item label {
+      margin-bottom: 5px;
+      font-weight: bold;
+      color: #555;
+    }
+    .control-item input {
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    button {
+      background-color: #4285f4;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s;
+      margin-top: 10px;
+    }
+    button:hover {
+      background-color: #3367d6;
+    }
+    .status {
+      margin-top: 10px;
+      color: #666;
+      font-style: italic;
+    }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "@tensorflow/tfjs": "https://esm.sh/@tensorflow/tfjs@4.20.0",
+      "@tensorflow-models/pose-detection": "https://cdn.skypack.dev/@tensorflow-models/pose-detection@2.1.3"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="poseDisplay">Initializing...</div>
+  <div id="videoContainer">
+    <video id="webcam" autoplay muted playsinline></video>
+    <canvas id="overlay"></canvas>
+  </div>
+  <div id="controls">
+    <h2>Pose Detection Settings</h2>
+    <div id="controlInputs" class="control-group">
+      <!-- Dynamically generated inputs for CONFIG go here -->
+    </div>
+    <button id="resetBtn">Reset Defaults</button>
+    <div class="status" id="status">Loading MoveNet model...</div>
+  </div>
+
+  <script type="module">
+    import * as tf from '@tensorflow/tfjs';
+    import * as poseDetection from '@tensorflow-models/pose-detection';
+
+    // 1. Define keypoints & states
+    const essentialKeypointNames = [
+      "nose", "left_shoulder", "right_shoulder",
+      "left_hip", "right_hip", "left_wrist",
+      "right_wrist", "left_elbow", "right_elbow"
+    ];
+    
+    const POSE_STATES = {
+      IDLE: 'IDLE',
+      LEAN_LEFT: 'LEAN LEFT',
+      LEAN_RIGHT: 'LEAN RIGHT',
+      DUCK: 'DUCK',
+      PUNCH_LEFT: 'PUNCH LEFT',
+      PUNCH_RIGHT: 'PUNCH RIGHT',
+      PUNCH_BOTH: 'PUNCH BOTH',
+      POSE_TEMPORARILY_INCOMPLETE: 'POSE INCOMPLETE (TEMP)',
+      POSE_INCOMPLETE: 'POSE INCOMPLETE',
+      POSE_LOST: 'POSE LOST'
+    };
+
+    // 2. Central CONFIG with default values
+    const CONFIG = {
+      leanAngleThreshold: 15,
+      duckYThreshold: 0.2,
+      punchExtensionThreshold: 0.3,
+      incompleteGracePeriod: 15,
+      smoothingFactor: 0.8
+    };
+
+    // Default CONFIG for reset
+    const DEFAULT_CONFIG = { ...CONFIG };
+
+    // Global variables
+    let detector;
+    let webcamElement, canvasElement, canvasCtx;
+    let currentPose = POSE_STATES.POSE_LOST;
+    let smoothedKeypoints = [];
+    let incompleteFrameCount = 0;
+    let baselineNoseY = null;
+    
+    // 3. Setup webcam and model
+    async function init() {
+      // Set up HTML elements
+      webcamElement = document.getElementById('webcam');
+      canvasElement = document.getElementById('overlay');
+      canvasCtx = canvasElement.getContext('2d');
+      
+      try {
+        // Setup webcam
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' }
+        });
+        webcamElement.srcObject = stream;
+        
+        // Wait for video to be ready
+        await new Promise(resolve => {
+          webcamElement.onloadedmetadata = () => {
+            resolve();
+          };
+        });
+        
+        // Set canvas dimensions to match video
+        webcamElement.play();
+        const videoWidth = webcamElement.videoWidth;
+        const videoHeight = webcamElement.videoHeight;
+        webcamElement.width = videoWidth;
+        webcamElement.height = videoHeight;
+        canvasElement.width = videoWidth;
+        canvasElement.height = videoHeight;
+        
+        // Load MoveNet model
+        updateStatus("Loading MoveNet model...");
+        detector = await poseDetection.createDetector(
+          poseDetection.SupportedModels.MoveNet,
+          {
+            modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
+            enableSmoothing: false // We'll do our own smoothing
+          }
+        );
+        updateStatus("MoveNet loaded! Detecting poses...");
+        
+        // Start detection loop
+        detectPose();
+      } catch (error) {
+        updateStatus(`Error: ${error.message}`);
+        console.error(error);
+      }
+    }
+
+    // Helper to update status message
+    function updateStatus(message) {
+      document.getElementById('status').textContent = message;
+    }
+
+    // 4. Main loop: detect -> smooth keypoints -> classify pose -> update UI
+    async function detectPose() {
+      if (detector && webcamElement.readyState === 4) {
+        try {
+          // 4.1. Estimate poses
+          const poses = await detector.estimatePoses(webcamElement);
+          
+          if (poses.length > 0) {
+            const pose = poses[0];
+            
+            // 4.2. Smooth coordinates
+            smoothedKeypoints = smoothKeypoints(pose.keypoints, smoothedKeypoints);
+            
+            // 4.3 & 4.4. Classify pose using smoothed keypoints
+            classifyPose(smoothedKeypoints);
+            
+            // 4.6. Render
+            renderOverlay(smoothedKeypoints);
+          } else {
+            // No poses detected
+            handlePoseLost();
+          }
+        } catch (error) {
+          console.error('Error in pose detection:', error);
+          updateStatus(`Detection error: ${error.message}`);
+        }
+      }
+      
+      // Continue the detection loop
+      requestAnimationFrame(detectPose);
+    }
+    
+    // Apply exponential smoothing to keypoints
+    function smoothKeypoints(newKeypoints, prevKeypoints) {
+      if (!prevKeypoints || prevKeypoints.length === 0) {
+        return [...newKeypoints];
+      }
+      
+      const alpha = CONFIG.smoothingFactor;
+      return newKeypoints.map((keypoint, i) => {
+        return {
+          ...keypoint,
+          x: alpha * prevKeypoints[i].x + (1 - alpha) * keypoint.x,
+          y: alpha * prevKeypoints[i].y + (1 - alpha) * keypoint.y,
+          score: keypoint.score // don't smooth confidence scores
+        };
+      });
+    }
+    
+    // Check if essential keypoints are visible
+    function checkEssentialKeypoints(keypoints) {
+      const keypointMap = {};
+      keypoints.forEach(kp => keypointMap[kp.name] = kp);
+      
+      const missingKeypoints = essentialKeypointNames.filter(name => 
+        !keypointMap[name] || keypointMap[name].score < 0.3
+      );
+      
+      return {
+        allVisible: missingKeypoints.length === 0,
+        missingCount: missingKeypoints.length,
+        missing: missingKeypoints
+      };
+    }
+    
+    // Calculate angle between three points
+    function calculateAngle(pointA, pointB, pointC) {
+      const angleAB = Math.atan2(pointB.y - pointA.y, pointB.x - pointA.x);
+      const angleBC = Math.atan2(pointC.y - pointB.y, pointC.x - pointB.x);
+      let angle = (angleAB - angleBC) * 180 / Math.PI;
+      
+      // Normalize to 0-360
+      if (angle < 0) angle += 360;
+      if (angle > 180) angle = 360 - angle;
+      
+      return angle;
+    }
+    
+    // Calculate distance between two points
+    function calculateDistance(pointA, pointB) {
+      return Math.sqrt(
+        Math.pow(pointA.x - pointB.x, 2) + 
+        Math.pow(pointA.y - pointB.y, 2)
+      );
+    }
+    
+    // Classify the pose based on keypoints
+    function classifyPose(keypoints) {
+      // Create a map for easier access
+      const kp = {};
+      keypoints.forEach(keypoint => {
+        kp[keypoint.name] = keypoint;
+      });
+      
+      // Check essential keypoints
+      const keypointCheck = checkEssentialKeypoints(keypoints);
+      
+      // Handle missing keypoints
+      if (!keypointCheck.allVisible) {
+        if (keypointCheck.missingCount > essentialKeypointNames.length / 2) {
+          currentPose = POSE_STATES.POSE_LOST;
+          incompleteFrameCount = 0;
+          return;
+        } else {
+          incompleteFrameCount++;
+          if (incompleteFrameCount < CONFIG.incompleteGracePeriod) {
+            currentPose = POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
+          } else {
+            currentPose = POSE_STATES.POSE_INCOMPLETE;
+          }
+          return;
+        }
+      } else {
+        // All keypoints visible, reset counter
+        incompleteFrameCount = 0;
+      }
+      
+      // Set baseline nose position if not set
+      if (baselineNoseY === null && kp.nose) {
+        baselineNoseY = kp.nose.y;
+      }
+      
+      // Initialize with IDLE
+      let newPose = POSE_STATES.IDLE;
+      
+      // Check for DUCK (if nose drops below threshold)
+      if (baselineNoseY && kp.nose) {
+        const noseYDrop = (kp.nose.y - baselineNoseY) / canvasElement.height;
+        if (noseYDrop > CONFIG.duckYThreshold) {
+          newPose = POSE_STATES.DUCK;
+        } else {
+          // Gradually update the baseline to account for natural movement
+          baselineNoseY = baselineNoseY * 0.95 + kp.nose.y * 0.05;
+        }
+      }
+      
+      // Check for LEAN (angle between shoulders and hips)
+      if (kp.left_shoulder && kp.right_shoulder && kp.left_hip && kp.right_hip) {
+        // Calculate midpoints
+        const midShoulder = {
+          x: (kp.left_shoulder.x + kp.right_shoulder.x) / 2,
+          y: (kp.left_shoulder.y + kp.right_shoulder.y) / 2
+        };
+        
+        const midHip = {
+          x: (kp.left_hip.x + kp.right_hip.x) / 2,
+          y: (kp.left_hip.y + kp.right_hip.y) / 2
+        };
+        
+        // Calculate angle of upper body from vertical
+        const verticalAngle = Math.atan2(midShoulder.x - midHip.x, midHip.y - midShoulder.y) * 180 / Math.PI;
+        
+        if (verticalAngle < -CONFIG.leanAngleThreshold) {
+          newPose = POSE_STATES.LEAN_LEFT;
+        } else if (verticalAngle > CONFIG.leanAngleThreshold) {
+          newPose = POSE_STATES.LEAN_RIGHT;
+        }
+      }
+      
+      // Check for PUNCH (extended arms relative to shoulder width)
+      if (newPose === POSE_STATES.IDLE && 
+          kp.left_shoulder && kp.right_shoulder && 
+          kp.left_wrist && kp.right_wrist) {
+            
+        const shoulderWidth = calculateDistance(kp.left_shoulder, kp.right_shoulder);
+        
+        // Left arm extension
+        const leftArmExtension = calculateDistance(kp.left_wrist, kp.left_shoulder) / shoulderWidth;
+        
+        // Right arm extension
+        const rightArmExtension = calculateDistance(kp.right_wrist, kp.right_shoulder) / shoulderWidth;
+        
+        const leftPunch = leftArmExtension > CONFIG.punchExtensionThreshold;
+        const rightPunch = rightArmExtension > CONFIG.punchExtensionThreshold;
+        
+        if (leftPunch && rightPunch) {
+          newPose = POSE_STATES.PUNCH_BOTH;
+        } else if (leftPunch) {
+          newPose = POSE_STATES.PUNCH_LEFT;
+        } else if (rightPunch) {
+          newPose = POSE_STATES.PUNCH_RIGHT;
+        }
+      }
+      
+      // Update the current pose
+      currentPose = newPose;
+      
+      // Update display
+      document.getElementById('poseDisplay').textContent = currentPose;
+    }
+    
+    function handlePoseLost() {
+      currentPose = POSE_STATES.POSE_LOST;
+      document.getElementById('poseDisplay').textContent = currentPose;
+      // Clear canvas
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+    }
+    
+    // Render keypoints and connections on canvas
+    function renderOverlay(keypoints) {
+      // Clear canvas
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      
+      // Draw keypoints
+      keypoints.forEach(keypoint => {
+        // Only draw keypoints with reasonable confidence
+        if (keypoint.score > 0.3) {
+          canvasCtx.fillStyle = '#00FF00';
+          canvasCtx.beginPath();
+          canvasCtx.arc(keypoint.x, keypoint.y, 5, 0, 2 * Math.PI);
+          canvasCtx.fill();
+          
+          // Optionally draw keypoint names
+          canvasCtx.fillStyle = 'white';
+          canvasCtx.font = '12px Arial';
+          canvasCtx.fillText(keypoint.name, keypoint.x + 8, keypoint.y);
+        }
+      });
+      
+      // Draw connections between keypoints
+      const connections = [
+        ['nose', 'left_eye'], ['nose', 'right_eye'],
+        ['left_eye', 'left_ear'], ['right_eye', 'right_ear'],
+        ['nose', 'left_shoulder'], ['nose', 'right_shoulder'],
+        ['left_shoulder', 'right_shoulder'],
+        ['left_shoulder', 'left_elbow'], ['right_shoulder', 'right_elbow'],
+        ['left_elbow', 'left_wrist'], ['right_elbow', 'right_wrist'],
+        ['left_shoulder', 'left_hip'], ['right_shoulder', 'right_hip'],
+        ['left_hip', 'right_hip'],
+        ['left_hip', 'left_knee'], ['right_hip', 'right_knee'],
+        ['left_knee', 'left_ankle'], ['right_knee', 'right_ankle']
+      ];
+      
+      const keypointMap = {};
+      keypoints.forEach(kp => keypointMap[kp.name] = kp);
+      
+      canvasCtx.strokeStyle = '#00FF00';
+      canvasCtx.lineWidth = 2;
+      
+      connections.forEach(([from, to]) => {
+        const fromKP = keypointMap[from];
+        const toKP = keypointMap[to];
+        
+        if (fromKP && toKP && fromKP.score > 0.3 && toKP.score > 0.3) {
+          canvasCtx.beginPath();
+          canvasCtx.moveTo(fromKP.x, fromKP.y);
+          canvasCtx.lineTo(toKP.x, toKP.y);
+          canvasCtx.stroke();
+        }
+      });
+      
+      // Update display
+      document.getElementById('poseDisplay').textContent = currentPose;
+    }
+
+    // 5. Build controls UI
+    function buildControls() {
+      const controlsContainer = document.getElementById('controlInputs');
+      
+      // Create input for each CONFIG property
+      for (const [key, value] of Object.entries(CONFIG)) {
+        const controlDiv = document.createElement('div');
+        controlDiv.className = 'control-item';
+        
+        const label = document.createElement('label');
+        label.textContent = formatLabel(key);
+        label.htmlFor = `input-${key}`;
+        
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.id = `input-${key}`;
+        input.value = value;
+        input.step = key.includes('Factor') ? '0.05' : '1';
+        
+        // Add event listener
+        input.addEventListener('change', () => {
+          CONFIG[key] = parseFloat(input.value);
+          updateStatus(`Updated ${formatLabel(key)} to ${input.value}`);
+        });
+        
+        controlDiv.appendChild(label);
+        controlDiv.appendChild(input);
+        controlsContainer.appendChild(controlDiv);
+      }
+      
+      // Add reset button functionality
+      document.getElementById('resetBtn').addEventListener('click', () => {
+        // Reset CONFIG to defaults
+        Object.keys(CONFIG).forEach(key => {
+          CONFIG[key] = DEFAULT_CONFIG[key];
+          document.getElementById(`input-${key}`).value = DEFAULT_CONFIG[key];
+        });
+        updateStatus('All settings reset to defaults');
+      });
+    }
+    
+    // Helper to format control labels
+    function formatLabel(key) {
+      // Convert camelCase to Title Case with spaces
+      const formatted = key
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^./, str => str.toUpperCase());
+      
+      return formatted;
+    }
+
+    // Initialize the app
+    window.addEventListener('load', () => {
+      init();
+      buildControls();
+    });
+  </script>
+</body>
+</html>
