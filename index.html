@@ -12,6 +12,7 @@
 }
 </script>
 <style>
+/* ... (CSS remains the same as the previous version) ... */
 body, html {
     margin:0;
     padding:0;
@@ -62,8 +63,6 @@ body, html {
 }
 #container {
     position:relative;
-    /* width: 640px; height: 480px; */ /* Old fixed size */
-    /* New responsive size maintaining 4:3 aspect ratio */
     aspect-ratio: 640 / 480;
     height: 100%; /* Fill the height of video-area */
     max-width: 100%; /* Don't exceed width of video-area */
@@ -124,7 +123,7 @@ body, html {
 }
 #controlsContainer label {
     margin-right: 10px;
-    min-width: 230px; /* Align inputs */
+    min-width: 260px; /* Adjusted for longer names */
     font-size: 0.9em;
     color: #ccc;
 }
@@ -177,7 +176,6 @@ body, html {
 #console-output-area p.error { color: #ff6b6b; }
 #console-output-area p.warn { color: #ffa500; }
 #console-output-area p.log { color: #ccc; }
-
 </style>
 </head>
 <body>
@@ -186,27 +184,20 @@ body, html {
     <div id="pose-info-area">
         <div id="poseText">Loading…</div>
     </div>
-
     <div id="video-area">
         <div id="container">
-            <video id="video" autoplay playsinline muted></video> <!-- Added muted for autoplay policies -->
+            <video id="video" autoplay playsinline muted></video>
             <canvas id="overlay"></canvas>
         </div>
     </div>
-
     <div id="config-area">
         <div id="controlsContainer">
           <h3>Adjust Configuration</h3>
-          <div id="config-vars-list">
-            <!-- Config variables will be dynamically inserted here by JS -->
-          </div>
+          <div id="config-vars-list"></div>
           <p id="configStatus"></p>
         </div>
     </div>
-
-    <div id="console-output-area">
-        <!-- Console messages will be displayed here -->
-    </div>
+    <div id="console-output-area"></div>
 </div>
 
 <script type="module">
@@ -214,23 +205,19 @@ body, html {
   import * as poseDetection from '@tensorflow-models/pose-detection';
 
   const consoleOutputDiv = document.getElementById('console-output-area');
-
   function logToScreen(message, type = 'log') {
+    // ... (logToScreen function remains the same)
     if (!consoleOutputDiv) return;
     const p = document.createElement('p');
     const GTMtimestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'});
     p.textContent = `[${GTMtimestamp} ${type.toUpperCase()}]: ${message}`;
     p.className = type; // for styling (error, warn, log)
     consoleOutputDiv.appendChild(p);
-    // Auto-scroll to the bottom
     consoleOutputDiv.scrollTop = consoleOutputDiv.scrollHeight;
   }
-
-  // Intercept console messages
   const originalConsoleLog = console.log;
   const originalConsoleError = console.error;
   const originalConsoleWarn = console.warn;
-
   console.log = (...args) => {
     originalConsoleLog.apply(console, args);
     logToScreen(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' '), 'log');
@@ -244,31 +231,29 @@ body, html {
     logToScreen(args.map(arg => String(arg)).join(' '), 'warn');
   };
 
-
   // CONFIG & STATE
   const CONFIG = {
-    minPoseConfidence: 0.3,    // float
-    poseSmoothFactor: 0.8,     // float
-    minTorsoHeight: 30,        // integer
-    minShoulderWidth: 30,      // integer
-    torsoChangeThreshold: 0.05,// float
-    duckThresholdRatio: 1,     // float
-    leanThresholdX: 0.15,      // float
-    punchThresholdX: 0.3,      // float
-    temporarilyIncompleteDurationMs: 500, // integer
+    minPoseConfidence: 0.25,    // General minimum confidence for a keypoint to be considered
+    poseSmoothFactor: 0.75,     // Smoothing factor for keypoint positions (0-1, higher is smoother)
+    minTorsoHeight: 25,        // Min screen pixels for torso to be considered a valid pose
+    minShoulderWidth: 25,      // Min screen pixels for shoulder width
+    duckThresholdRatio: 0.4,     // Nose must drop this ratio of calibratedTorsoHeight to trigger duck
+    leanThresholdX: 0.15,      // Lean offset (shoulder_mid_x - hip_mid_x) must be this ratio of shoulderWidth
+    punchThresholdX: 0.3,      // Elbow-wrist X distance must be this ratio of shoulder-elbow X distance for punch
+    temporarilyIncompleteDurationMs: 700, // How long a pose can be missing some parts before becoming fully incomplete
+
+    // New/Revised for Duck and Calibration Robustness
+    duckShoulderWidthToleranceRatio: 0.25, // Allowed % change in shoulder width during deep duck if hips are lost
+    deepDuckNoseDropFactor: 0.55,         // Nose must drop by this factor of calibratedTorsoHeight for deep duck inference
+    duckExitFactor: 0.75,                 // To exit duck, nose must rise above (duckThresholdRatio * duckExitFactor)
+    minScoreForCalibrationKeypoints: 0.4, // Min score for nose, shoulders, hips to be used in calibration
+    recalibrationTorsoChangeThreshold: 0.20, // % change in current torso height (relative to calibrated) to trigger recalibration
   };
 
-  const POSE_STATES = {
-    IDLE: 'IDLE',
-    PUNCH_LEFT: 'PUNCH_LEFT',
-    PUNCH_RIGHT: 'PUNCH_RIGHT',
-    LEAN_LEFT: 'LEAN_LEFT',
-    LEAN_RIGHT: 'LEAN_RIGHT',
-    DUCK: 'DUCK',
-    POSE_TEMPORARILY_INCOMPLETE: 'POSE_TEMPORARILY_INCOMPLETE',
-    POSE_INCOMPLETE: 'POSE_INCOMPLETE',
-    PUNCH_BOTH: 'PUNCH_BOTH',
-    POSE_LOST: 'POSE_LOST'
+  const POSE_STATES = { /* ... (remains the same) ... */
+    IDLE: 'IDLE', PUNCH_LEFT: 'PUNCH_LEFT', PUNCH_RIGHT: 'PUNCH_RIGHT', LEAN_LEFT: 'LEAN_LEFT', LEAN_RIGHT: 'LEAN_RIGHT',
+    DUCK: 'DUCK', POSE_TEMPORARILY_INCOMPLETE: 'POSE_TEMPORARILY_INCOMPLETE', POSE_INCOMPLETE: 'POSE_INCOMPLETE',
+    PUNCH_BOTH: 'PUNCH_BOTH', POSE_LOST: 'POSE_LOST', CALIBRATING: 'CALIBRATING'
   };
 
   const essentialNames = [
@@ -276,24 +261,32 @@ body, html {
     "left_hip", "right_hip", "left_wrist",
     "right_wrist", "left_elbow", "right_elbow"
   ];
+  const calibrationKeypointNames = ["nose", "left_shoulder", "right_shoulder", "left_hip", "right_hip"];
 
   const integerConfigVars = ['minTorsoHeight', 'minShoulderWidth', 'temporarilyIncompleteDurationMs'];
 
   let gameState = {
     smoothedKeypoints: {},
-    lastTorsoHeight: null,
-    standingNoseY: null,
-    ducking: false,
+    ducking: false, // True if currently in a duck state
     temporarilyIncompleteEntryTime: 0,
+    isProperlyCalibrated: false,
+    calibratedStandingNoseY: null,
+    calibratedTorsoHeight: null,
+    calibratedShoulderWidth: null,
+    lastPoseState: POSE_STATES.CALIBRATING, // To detect when IDLE is first achieved for calibration
   };
 
-  function _smoothAndGetKeypoint(name, map) {
-    const kp = map[name];
-    if(!kp) return null;
+  function _smoothAndGetKeypoint(name, kpMap) {
+    // ... (remains the same, but ensure kpMap uses raw keypoints)
+    const kp = kpMap[name];
+    if(!kp || kp.score < CONFIG.minPoseConfidence) { // Check confidence here
+        delete gameState.smoothedKeypoints[name]; // Remove smoothed if original is lost/bad
+        return null;
+    }
 
     let sk = gameState.smoothedKeypoints[name];
-    if(!sk) {
-      sk = {x: kp.x, y: kp.y, score: kp.score};
+    if(!sk || sk.rawScore < CONFIG.minPoseConfidence ) { // Also check if smoothed version was based on previously bad raw
+      sk = {x: kp.x, y: kp.y, score: kp.score, rawScore: kp.score}; // Store rawScore for future checks
       gameState.smoothedKeypoints[name] = sk;
       return sk;
     }
@@ -301,144 +294,231 @@ body, html {
     const f = CONFIG.poseSmoothFactor;
     sk.x = f * sk.x + (1-f) * kp.x;
     sk.y = f * sk.y + (1-f) * kp.y;
-    sk.score = kp.score;
+    sk.score = kp.score; // Smoothed score is the latest raw score
+    sk.rawScore = kp.score;
     return sk;
   }
 
-  function _checkPunch(w, e, s, isLeft, shoulderMidY, shoulderWidth) {
+  function _checkPunch(w, e, s, isLeft, shoulderMidY, shoulderWidth) { /* ... (remains the same) ... */
     if(!w || !e || !s) return false;
-
     const wristAhead = isLeft ? (w.x > e.x && e.x > s.x) : (w.x < e.x && e.x < s.x);
     if(!wristAhead) return false;
-
     const seDist = Math.abs(s.x - e.x),
           ewDist = Math.abs(e.x - w.x),
           alignedY = Math.abs(w.y - shoulderMidY) < shoulderWidth * 0.6;
-
     return seDist > 5 && ewDist > CONFIG.punchThresholdX * seDist && alignedY;
   }
 
-  function interpretPose(keypoints) {
-    if (!keypoints || keypoints.length === 0) {
-      gameState.temporarilyIncompleteEntryTime = 0;
-      return POSE_STATES.POSE_LOST;
+
+  function calibrateStandingPose(sKp) { // sKp are smoothed keypoint objects
+    if (!sKp.nose || !sKp.ls || !sKp.rs || !sKp.lh || !sKp.rh) {
+        console.warn("Calibration skipped: Missing essential keypoints for calibration.");
+        return false;
     }
 
-    const kpMap = Object.fromEntries(
-      keypoints.filter(p => p.name && p.score >= CONFIG.minPoseConfidence)
-               .map(p => [p.name, p])
-    );
+    // Check scores of raw keypoints used for calibration
+    const calibMinScore = CONFIG.minScoreForCalibrationKeypoints;
+    if (sKp.nose.rawScore < calibMinScore || sKp.ls.rawScore < calibMinScore || sKp.rs.rawScore < calibMinScore ||
+        sKp.lh.rawScore < calibMinScore || sKp.rh.rawScore < calibMinScore) {
+        console.warn(`Calibration skipped: Keypoint scores too low. N:${sKp.nose.rawScore?.toFixed(2)} LS:${sKp.ls.rawScore?.toFixed(2)} RS:${sKp.rs.rawScore?.toFixed(2)} LH:${sKp.lh.rawScore?.toFixed(2)} RH:${sKp.rh.rawScore?.toFixed(2)}`);
+        return false;
+    }
 
-    const essentialKeypointsPresent = essentialNames.every(n => kpMap[n]);
+    const shoulderMidY = (sKp.ls.y + sKp.rs.y) / 2;
+    const hipMidY = (sKp.lh.y + sKp.rh.y) / 2;
 
-    if (!essentialKeypointsPresent) {
-      if (gameState.temporarilyIncompleteEntryTime === 0) {
-        gameState.temporarilyIncompleteEntryTime = performance.now();
-        return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
-      } else {
-        if (performance.now() - gameState.temporarilyIncompleteEntryTime < CONFIG.temporarilyIncompleteDurationMs) {
-          return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
+    gameState.calibratedStandingNoseY = sKp.nose.y;
+    gameState.calibratedTorsoHeight = Math.abs(shoulderMidY - hipMidY);
+    gameState.calibratedShoulderWidth = Math.abs(sKp.ls.x - sKp.rs.x);
+    gameState.isProperlyCalibrated = true;
+    gameState.ducking = false; // Always reset ducking on recalibration
+
+    console.log(`Pose Recalibrated: NoseY=${gameState.calibratedStandingNoseY.toFixed(0)}, TorsoH=${gameState.calibratedTorsoHeight.toFixed(0)}, ShoulderW=${gameState.calibratedShoulderWidth.toFixed(0)}`);
+    return true;
+  }
+
+function interpretPose(rawKeypoints) {
+    if (!rawKeypoints || rawKeypoints.length === 0) {
+        gameState.temporarilyIncompleteEntryTime = 0; // Reset timer
+        gameState.isProperlyCalibrated = false; // Lose calibration if pose is lost
+        return POSE_STATES.POSE_LOST;
+    }
+
+    const kpMap = Object.fromEntries(rawKeypoints.map(p => [p.name, p]));
+
+    // Smoothed Keypoints (sKp)
+    const sKp = {};
+    essentialNames.forEach(name => {
+        sKp[name] = _smoothAndGetKeypoint(name, kpMap);
+    });
+
+    const { nose, left_shoulder: ls, right_shoulder: rs, left_hip: lh, right_hip: rh,
+            left_elbow: le, right_elbow: re, left_wrist: lw, right_wrist: rw } = sKp;
+
+    // --- Calibration Logic ---
+    let needsRecalibration = false;
+    let canCalibrateNow = nose && ls && rs && lh && rh; // Check if smoothed versions are available
+
+    if (canCalibrateNow) {
+        const currentTorsoHeight = Math.abs(((ls.y + rs.y) / 2) - ((lh.y + rh.y) / 2));
+        if (!gameState.isProperlyCalibrated) {
+            // Try initial calibration if system just started or lost calibration
+            // Let's require an IDLE state for initial calibration to avoid calibrating mid-action.
+            // This check will be done after state determination.
+            needsRecalibration = true; // Flag for potential calibration
         } else {
-          return POSE_STATES.POSE_INCOMPLETE;
+            // Check if existing calibration is stale due to distance change
+            if (gameState.calibratedTorsoHeight > 0 && // Avoid division by zero
+                Math.abs(currentTorsoHeight - gameState.calibratedTorsoHeight) / gameState.calibratedTorsoHeight > CONFIG.recalibrationTorsoChangeThreshold) {
+                console.log("Recalibration triggered by torso height change.");
+                needsRecalibration = true;
+            }
         }
-      }
+        if (needsRecalibration) {
+            if (calibrateStandingPose(sKp)) { // Pass smoothed keypoints
+                 // Successfully recalibrated
+            } else {
+                 canCalibrateNow = false; // Calibration failed, likely due to low scores
+                 needsRecalibration = false; // Reset flag
+            }
+        }
     }
 
-    gameState.temporarilyIncompleteEntryTime = 0;
 
-    const es = {};
-    for (let n of essentialNames) es[n] = _smoothAndGetKeypoint(n, kpMap);
-
-    const {
-      nose, left_shoulder: ls, right_shoulder: rs,
-      left_hip: lh, right_hip: rh,
-      left_wrist: lw, right_wrist: rw,
-      left_elbow: le, right_elbow: re
-    } = es;
-
-    if (!nose || !ls || !rs || !lh || !rh || !lw || !rw || !le || !re) {
-        return POSE_STATES.POSE_INCOMPLETE;
+    // --- Handle Truly Lost or Minimal Poses ---
+    if (!nose || !ls || !rs) { // Absolute minimum: nose and shoulders
+        gameState.isProperlyCalibrated = false; // Lose calibration
+        // Simplified incomplete logic for now
+        if (gameState.temporarilyIncompleteEntryTime === 0) gameState.temporarilyIncompleteEntryTime = performance.now();
+        if (performance.now() - gameState.temporarilyIncompleteEntryTime < CONFIG.temporarilyIncompleteDurationMs) {
+            return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
+        }
+        return POSE_STATES.POSE_INCOMPLETE; // Or POSE_LOST if more stringent
     }
 
-    const shoulderMidY = (ls.y + rs.y) / 2,
-          shoulderMidX = (ls.x + rs.x) / 2,
-          hipMidY = (lh.y + rh.y) / 2,
-          hipMidX = (lh.x + rh.x) / 2,
-          torsoHeight = Math.abs(shoulderMidY - hipMidY),
-          shoulderWidth = Math.abs(ls.x - rs.x);
+    // --- Duck Detection ---
+    let determinedPose = null; // Will hold the pose if decided early (e.g. DUCK)
 
-    if (torsoHeight < CONFIG.minTorsoHeight || shoulderWidth < CONFIG.minShoulderWidth) {
-      return POSE_STATES.POSE_LOST;
+    if (gameState.isProperlyCalibrated) {
+        const currentShoulderWidth = ls && rs ? Math.abs(ls.x - rs.x) : 0;
+        const effectiveNoseDropRatio = gameState.calibratedTorsoHeight > 0 ?
+                                     (nose.y - gameState.calibratedStandingNoseY) / gameState.calibratedTorsoHeight : 0;
+
+        // 1. Deep Duck Inference (can override missing hips/wrists)
+        if (le && re && // Elbows are important for deep duck orientation
+            currentShoulderWidth > 0 && Math.abs(currentShoulderWidth - gameState.calibratedShoulderWidth) <= gameState.calibratedShoulderWidth * CONFIG.duckShoulderWidthToleranceRatio &&
+            effectiveNoseDropRatio > CONFIG.deepDuckNoseDropFactor)
+        {
+            gameState.ducking = true;
+            determinedPose = POSE_STATES.DUCK;
+            // console.log("Deep DUCK inferred.");
+        }
+        // 2. Standard Duck (requires all keypoints if not deep duck)
+        else if (lh && rh && le && re && lw && rw) { // All essentials needed for standard evaluation
+            if (!gameState.ducking && effectiveNoseDropRatio > CONFIG.duckThresholdRatio) {
+                gameState.ducking = true;
+                // console.log("Standard DUCK entered.");
+            } else if (gameState.ducking && effectiveNoseDropRatio < CONFIG.duckThresholdRatio * CONFIG.duckExitFactor) {
+                gameState.ducking = false;
+                console.log("Standard DUCK exited, recalibrating.");
+                // Recalibrate on exiting duck, as user might be in a new standing position
+                if(canCalibrateNow) calibrateStandingPose(sKp); // sKp contains all required points for calib here
+            }
+        }
+        // If still ducking after checks, this is the pose
+        if (gameState.ducking && !determinedPose) {
+             determinedPose = POSE_STATES.DUCK;
+        }
     }
 
-    const torsoChangedSignificantly = gameState.lastTorsoHeight != null &&
-        Math.abs(torsoHeight - gameState.lastTorsoHeight) / gameState.lastTorsoHeight > CONFIG.torsoChangeThreshold;
-
-    if (!gameState.standingNoseY || torsoChangedSignificantly) {
-      gameState.standingNoseY = nose.y;
-      if (torsoChangedSignificantly) {
-        gameState.ducking = false;
-      }
-    }
-    gameState.lastTorsoHeight = torsoHeight;
-
-    const normalizedDrop = gameState.standingNoseY && torsoHeight > 0 ? (nose.y - gameState.standingNoseY) / torsoHeight : 0;
-
-    if (!gameState.ducking && gameState.standingNoseY && normalizedDrop > CONFIG.duckThresholdRatio) {
-        gameState.ducking = true;
-    }
-    else if (gameState.ducking && gameState.standingNoseY && normalizedDrop < CONFIG.duckThresholdRatio * 0.5) {
-        gameState.ducking = false;
-        gameState.standingNoseY = nose.y;
-    }
-
-    if (gameState.ducking) {
+    if (determinedPose === POSE_STATES.DUCK) {
+        gameState.temporarilyIncompleteEntryTime = 0; // Reset timer if a valid pose (DUCK) is found
         return POSE_STATES.DUCK;
     }
 
+
+    // --- Full Pose Check for Other Poses (if not ducking) ---
+    // All essential keypoints must be present for any other pose.
+    const allEssentialsPresent = nose && ls && rs && lh && rh && le && re && lw && rw;
+
+    if (!allEssentialsPresent) {
+        if (gameState.temporarilyIncompleteEntryTime === 0) gameState.temporarilyIncompleteEntryTime = performance.now();
+        if (performance.now() - gameState.temporarilyIncompleteEntryTime < CONFIG.temporarilyIncompleteDurationMs) {
+            return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
+        }
+        gameState.isProperlyCalibrated = false; // If incomplete for too long, lose calibration
+        return POSE_STATES.POSE_INCOMPLETE;
+    }
+
+    // If we reach here, all essential keypoints are present, and we are not ducking.
+    gameState.temporarilyIncompleteEntryTime = 0; // Reset incomplete timer
+
+    // Initial Calibration on first stable IDLE-like pose
+    if (!gameState.isProperlyCalibrated && canCalibrateNow) { // canCalibrateNow implies nose, shoulders, hips are good
+        console.log("Attempting initial calibration on stable pose.");
+        calibrateStandingPose(sKp);
+        if(gameState.isProperlyCalibrated) return POSE_STATES.IDLE; // Return IDLE for one frame post-calibration
+        else return POSE_STATES.CALIBRATING; // Still waiting for good calib
+    }
+    if (!gameState.isProperlyCalibrated) return POSE_STATES.CALIBRATING;
+
+
+    // Recalculate some metrics with all smoothed keypoints assured
+    const shoulderMidY = (ls.y + rs.y) / 2;
+    const shoulderMidX = (ls.x + rs.x) / 2;
+    const hipMidY = (lh.y + rh.y) / 2;
+    const hipMidX = (lh.x + rh.x) / 2;
+    const currentTorsoHeight = Math.abs(shoulderMidY - hipMidY);
+    const currentShoulderWidth = Math.abs(ls.x - rs.x);
+
+    if (currentTorsoHeight < CONFIG.minTorsoHeight || currentShoulderWidth < CONFIG.minShoulderWidth) {
+        // This check seems redundant if calibration is working, but good as a fallback
+        // console.warn("Pose lost due to min height/width fail after other checks.");
+        return POSE_STATES.POSE_LOST; // Or INCOMPLETE
+    }
+
+    // --- Lean & Punch Logic ---
     const leanOffset = shoulderMidX - hipMidX;
-    const leanThresh = CONFIG.leanThresholdX * shoulderWidth;
+    const leanThresh = CONFIG.leanThresholdX * currentShoulderWidth;
 
     if (leanOffset > leanThresh) return POSE_STATES.LEAN_LEFT;
     if (leanOffset < -leanThresh) return POSE_STATES.LEAN_RIGHT;
 
-    const leftPunch = _checkPunch(lw, le, ls, true, shoulderMidY, shoulderWidth);
-    const rightPunch = _checkPunch(rw, re, rs, false, shoulderMidY, shoulderWidth);
+    const leftPunch = _checkPunch(lw, le, ls, true, shoulderMidY, currentShoulderWidth);
+    const rightPunch = _checkPunch(rw, re, rs, false, shoulderMidY, currentShoulderWidth);
 
     if (leftPunch && rightPunch) return POSE_STATES.PUNCH_BOTH;
     if (leftPunch) return POSE_STATES.PUNCH_LEFT;
     if (rightPunch) return POSE_STATES.PUNCH_RIGHT;
 
     return POSE_STATES.IDLE;
-  }
+}
 
-  function drawKeypoints(ctx) { // ctx is already scaled
+
+  function drawKeypoints(ctx) { /* ... (remains the same, ensure it uses gameState.smoothedKeypoints) ... */
     ctx.fillStyle = 'lime';
     ctx.strokeStyle = 'yellow';
-    ctx.lineWidth = 2; // This lineWidth will be scaled. If you want constant screen width, adjust by scale factor.
+    ctx.lineWidth = 2;
 
-    for (let n of essentialNames) {
-      const kp = gameState.smoothedKeypoints[n];
-      if (!kp || kp.score < CONFIG.minPoseConfidence) continue;
-
-      ctx.beginPath();
-      // The radius '5' will also be scaled by ctx.scale(). If you want a fixed screen-space radius,
-      // you'd need to divide by the current scale, e.g., 5 / Math.sqrt(ctx.getTransform().a * ctx.getTransform().d)
-      // For simplicity, let's keep it scaled for now.
-      ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.stroke();
-    }
+    essentialNames.forEach(name => {
+        const kp = gameState.smoothedKeypoints[name];
+        // Ensure kp exists and has a score (smoothedKeypoints might persist even if raw kp is momentarily lost by _smoothAndGetKeypoint logic)
+        if (kp && kp.score >= CONFIG.minPoseConfidence) {
+            ctx.beginPath();
+            ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
+            ctx.fill();
+            ctx.stroke();
+        }
+    });
   }
 
-  function setupConfigControls() {
+  function setupConfigControls() { /* ... (remains largely the same, just ensure new CONFIG vars are populated) ... */
     const configVarsListDiv = document.getElementById('config-vars-list');
     const statusP = document.getElementById('configStatus');
-    configVarsListDiv.innerHTML = ''; // Clear previous (if any)
+    configVarsListDiv.innerHTML = ''; // Clear previous
 
     Object.entries(CONFIG).forEach(([varName, currentValue]) => {
         const varRowDiv = document.createElement('div');
-
         const label = document.createElement('label');
         label.htmlFor = `config_input_${varName}`;
         label.textContent = `${varName}:`;
@@ -451,8 +531,12 @@ body, html {
 
         if (integerConfigVars.includes(varName)) {
             input.step = "1";
-        } else {
-            input.step = (varName === 'minPoseConfidence' || varName === 'poseSmoothFactor' || varName === 'torsoChangeThreshold') ? "0.01" : "0.1";
+        } else { // Floats
+             if (varName.includes('Factor') || varName.includes('Ratio') || varName.includes('Threshold') || varName.includes('Confidence') || varName.includes('Score')) {
+                input.step = "0.01"; // Finer step for ratios/factors/thresholds
+            } else {
+                input.step = "0.1";
+            }
         }
         varRowDiv.appendChild(input);
 
@@ -474,16 +558,30 @@ body, html {
 
             if (isNaN(newValue)) {
                 statusP.textContent = `Error: Invalid number for ${selectedVar}.`;
-                statusP.style.color = '#ff6b6b'; // Reddish
-                input.value = CONFIG[selectedVar]; // Reset to current valid value
+                statusP.style.color = '#ff6b6b';
+                input.value = CONFIG[selectedVar];
                 return;
             }
+            // Basic validation for ratios/factors to be between 0 and 1 if applicable
+            if ((selectedVar.includes('Factor') || selectedVar.includes('Ratio')) && (selectedVar !== 'deepDuckNoseDropFactor' && selectedVar !== 'duckThresholdRatio') && (newValue < 0 || newValue > 1)) {
+                 // Allow duckThresholdRatio and deepDuckNoseDropFactor to be > 1 theoretically, though practically they won't be.
+                if (selectedVar !== 'duckThresholdRatio' && selectedVar !== 'deepDuckNoseDropFactor' && selectedVar !== 'leanThresholdX' && selectedVar !== 'punchThresholdX') {
+                   // console.warn(`${selectedVar} is typically 0-1. Value: ${newValue}`);
+                }
+            }
+
 
             CONFIG[selectedVar] = newValue;
-            input.value = newValue; // Reflect the potentially parsed/corrected value
+            input.value = newValue;
             statusP.textContent = `${selectedVar} updated to ${CONFIG[selectedVar]}.`;
-            statusP.style.color = '#7f7'; // Light green
+            statusP.style.color = '#7f7';
             console.log('CONFIG updated:', JSON.parse(JSON.stringify(CONFIG)));
+
+            // If a calibration-related parameter changed, it might be good to force a recalibration
+            if (selectedVar.includes('ScoreForCalibrationKeypoints') || selectedVar.includes('recalibrationTorsoChangeThreshold')) {
+                gameState.isProperlyCalibrated = false; // Force recalibration check on next frame
+                console.log("Calibration parameter changed, forcing recalibration check.");
+            }
         });
         configVarsListDiv.appendChild(varRowDiv);
     });
@@ -511,80 +609,62 @@ body, html {
         logToScreen("Video play failed. User interaction might be needed.", "error");
     });
 
-    // Canvas dimensions will be set relative to video element's client size in frameLoop
-    // This handles responsive scaling due to `object-fit: contain` and parent container size.
-
     const detector = await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
       {modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING}
     );
 
-    poseTextEl.innerText = 'Ready!';
+    poseTextEl.innerText = 'CALIBRATING'; // Initial state
 
     async function frameLoop() {
-      // Match canvas logical size to video's intrinsic size for coordinate mapping,
-      // but its display size to the video element's display size.
-      // The video element itself scales via CSS object-fit: contain.
-      // The canvas element is stretched to the video element's bounds.
-      // We need to scale the drawing operations.
-
       if (video.readyState < video.HAVE_METADATA || video.paused || video.ended) {
           requestAnimationFrame(frameLoop);
           return;
       }
-
-      // Set canvas display size to match video element's current display size
       if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
-          canvas.width = video.clientWidth;   // display width
-          canvas.height = video.clientHeight; // display height
+          canvas.width = video.clientWidth;
+          canvas.height = video.clientHeight;
       }
 
-      const poses = await detector.estimatePoses(video, {flipHorizontal: false}); // flipHorizontal false as CSS handles mirroring
+      const poses = await detector.estimatePoses(video, {flipHorizontal: false});
       const estimatedState = interpretPose(poses[0]?.keypoints || []);
 
+      // Update displayed pose text, but don't show POSE_TEMPORARILY_INCOMPLETE
+      // to avoid flickering if it's very short.
       if (estimatedState !== POSE_STATES.POSE_TEMPORARILY_INCOMPLETE) {
         poseTextEl.innerText = estimatedState;
       }
+      gameState.lastPoseState = estimatedState; // Store for next frame logic (e.g. initial calib)
+
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
       if (poses[0]?.keypoints && video.videoWidth > 0 && video.videoHeight > 0) {
           ctx.save();
-
-          // Calculate scaling factors based on video content size vs. canvas display size.
-          // This correctly handles letterboxing/pillarboxing from 'object-fit: contain'.
           const videoAspectRatio = video.videoWidth / video.videoHeight;
           const canvasAspectRatio = canvas.width / canvas.height;
           let renderWidth, renderHeight, offsetX = 0, offsetY = 0;
-
-          if (videoAspectRatio > canvasAspectRatio) { // Video is wider than canvas aspect ratio (letterboxed)
+          if (videoAspectRatio > canvasAspectRatio) {
               renderWidth = canvas.width;
               renderHeight = renderWidth / videoAspectRatio;
               offsetY = (canvas.height - renderHeight) / 2;
-          } else { // Video is taller or same aspect ratio (pillarboxed or exact fit)
+          } else {
               renderHeight = canvas.height;
               renderWidth = renderHeight * videoAspectRatio;
               offsetX = (canvas.width - renderWidth) / 2;
           }
-
-          // Move to the corner of the actual video content on the canvas
           ctx.translate(offsetX, offsetY);
-          // Scale the context to draw keypoints (which are in video.videoWidth/Height coords)
-          // onto the renderWidth/renderHeight area on the canvas.
           ctx.scale(renderWidth / video.videoWidth, renderHeight / video.videoHeight);
-
-          drawKeypoints(ctx); // drawKeypoints uses original video coordinates
+          drawKeypoints(ctx);
           ctx.restore();
       }
       requestAnimationFrame(frameLoop);
     }
-
     frameLoop();
   }
 
   main().catch(e => {
-    console.error(e); // This will also call logToScreen
-    document.getElementById('poseText').innerText = 'Critical Error!'; // Keep this for major init errors
+    console.error(e);
+    document.getElementById('poseText').innerText = 'Critical Error!';
   });
   </script>
 </body>
