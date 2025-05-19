@@ -178,6 +178,32 @@ body, html {
 #console-output-area p.warn { color: #ffa500; }
 #console-output-area p.log { color: #ccc; }
 
+/* 5. Debug Visualization */
+#debug-container {
+    margin-top: 10px;
+    padding: 5px;
+    border: 1px solid #555;
+    border-radius: 5px;
+    background-color: #2a2a2a;
+    font-family: monospace;
+    font-size: 0.85em;
+    color: #ddd;
+    max-height: 80px;
+    overflow-y: auto;
+}
+#debug-values {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 5px;
+}
+.debug-value {
+    display: flex;
+    justify-content: space-between;
+}
+.debug-label {
+    color: #0af;
+}
+
 </style>
 </head>
 <body>
@@ -201,6 +227,10 @@ body, html {
             <!-- Config variables will be dynamically inserted here by JS -->
           </div>
           <p id="configStatus"></p>
+          <div id="debug-container">
+            <h4 style="margin: 0 0 5px 0;">Debug Values</h4>
+            <div id="debug-values"></div>
+          </div>
         </div>
     </div>
 
@@ -214,6 +244,33 @@ body, html {
   import * as poseDetection from '@tensorflow-models/pose-detection';
 
   const consoleOutputDiv = document.getElementById('console-output-area');
+  const debugValuesDiv = document.getElementById('debug-values');
+
+  function updateDebugValue(label, value) {
+    const id = `debug-${label.replace(/\s+/g, '-').toLowerCase()}`;
+    let elem = document.getElementById(id);
+    
+    if (!elem) {
+      elem = document.createElement('div');
+      elem.id = id;
+      elem.className = 'debug-value';
+      
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'debug-label';
+      labelSpan.textContent = label + ':';
+      
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'debug-value-content';
+      
+      elem.appendChild(labelSpan);
+      elem.appendChild(valueSpan);
+      
+      debugValuesDiv.appendChild(elem);
+    }
+    
+    elem.querySelector('.debug-value-content').textContent = typeof value === 'number' ? 
+      value.toFixed(4) : String(value);
+  }
 
   function logToScreen(message, type = 'log') {
     if (!consoleOutputDiv) return;
@@ -224,6 +281,11 @@ body, html {
     consoleOutputDiv.appendChild(p);
     // Auto-scroll to the bottom
     consoleOutputDiv.scrollTop = consoleOutputDiv.scrollHeight;
+    
+    // Limit number of messages to prevent memory issues
+    while (consoleOutputDiv.children.length > 50) {
+      consoleOutputDiv.removeChild(consoleOutputDiv.firstChild);
+    }
   }
 
   // Intercept console messages
@@ -251,12 +313,14 @@ body, html {
     poseSmoothFactor: 0.8,     // float
     minTorsoHeight: 30,        // integer
     minShoulderWidth: 30,      // integer
-    torsoChangeThreshold: 0.05,// float
-      standingTorsoHeight: null,
-    duckThresholdRatio: 0.4,     // float
+    torsoChangeThreshold: 0.2, // float - updated as per user request
+    duckThresholdRatio: 0.35,  // float - This is now relative to torso height
     leanThresholdX: 0.15,      // float
     punchThresholdX: 0.3,      // float
     temporarilyIncompleteDurationMs: 500, // integer
+    shoulderHipDistanceMultiplier: 0.5,  // NEW: for scaling duck detection based on body proportions
+    standingHeightWindowSize: 30,        // NEW: number of frames to consider for standing height
+    minimumDuckDistance: 15,             // NEW: minimum pixel drop to be considered ducking
   };
 
   const POSE_STATES = {
@@ -278,14 +342,20 @@ body, html {
     "right_wrist", "left_elbow", "right_elbow"
   ];
 
-  const integerConfigVars = ['minTorsoHeight', 'minShoulderWidth', 'temporarilyIncompleteDurationMs'];
+  const integerConfigVars = ['minTorsoHeight', 'minShoulderWidth', 'temporarilyIncompleteDurationMs', 'standingHeightWindowSize', 'minimumDuckDistance'];
 
   let gameState = {
     smoothedKeypoints: {},
     lastTorsoHeight: null,
     standingNoseY: null,
+    recentNoseYs: [], // NEW: store recent nose Y positions for better standing height estimation
     ducking: false,
     temporarilyIncompleteEntryTime: 0,
+    calibrationComplete: false,
+    frameCounter: 0, // NEW: count frames for calibration
+    lastPoseState: null, // NEW: track the last pose state for stability
+    bodyScale: 1.0, // NEW: scaling factor based on person's distance from camera
+    standingTorsoHeight: null, // NEW: reference torso height when standing
   };
 
   function _smoothAndGetKeypoint(name, map) {
@@ -319,7 +389,53 @@ body, html {
     return seDist > 5 && ewDist > CONFIG.punchThresholdX * seDist && alignedY;
   }
 
+  function _updateBodyScale(torsoHeight, shoulderWidth) {
+    // This helps adapt thresholds to the person's distance from camera
+    const idealTorsoHeight = 150; // reference value when person is at ideal distance
+    const scale = torsoHeight / idealTorsoHeight;
+    
+    // Use exponential smoothing to avoid rapid changes
+    gameState.bodyScale = gameState.bodyScale * 0.9 + scale * 0.1;
+    
+    // Update debug values
+    updateDebugValue('Body Scale', gameState.bodyScale);
+    return gameState.bodyScale;
+  }
+
+  function _updateStandingHeight(nose, torsoHeight) {
+    if (!nose) return null;
+    
+    // Add the current nose Y to our recent observations
+    gameState.recentNoseYs.push(nose.y);
+    
+    // Limit the array size to our window size
+    if (gameState.recentNoseYs.length > CONFIG.standingHeightWindowSize) {
+      gameState.recentNoseYs.shift();
+    }
+    
+    // If we don't have enough frames yet, we can't establish a good standing height
+    if (gameState.recentNoseYs.length < CONFIG.standingHeightWindowSize * 0.5) {
+      return null;
+    }
+    
+    // Sort the nose Y values and take the median
+    const sortedYs = [...gameState.recentNoseYs].sort((a, b) => a - b);
+    const medianY = sortedYs[Math.floor(sortedYs.length / 2)];
+    
+    // Update the standing nose Y value if needed
+    if (!gameState.standingNoseY || 
+        Math.abs(medianY - gameState.standingNoseY) / torsoHeight > CONFIG.torsoChangeThreshold) {
+      gameState.standingNoseY = medianY;
+      gameState.standingTorsoHeight = torsoHeight;
+      gameState.ducking = false;
+    }
+    
+    return gameState.standingNoseY;
+  }
+
   function interpretPose(keypoints) {
+    gameState.frameCounter++;
+    
     if (!keypoints || keypoints.length === 0) {
       gameState.temporarilyIncompleteEntryTime = 0;
       return POSE_STATES.POSE_LOST;
@@ -345,90 +461,101 @@ body, html {
       }
     }
 
-  gameState.temporarilyIncompleteEntryTime = 0;
+    gameState.temporarilyIncompleteEntryTime = 0;
 
-  const es = {};
-  for (let n of essentialNames) es[n] = _smoothAndGetKeypoint(n, kpMap);
+    const es = {};
+    for (let n of essentialNames) es[n] = _smoothAndGetKeypoint(n, kpMap);
 
-  const { /* ... keypoints ... */ } = es;
-  if (!nose || !ls || !rs || !lh || !rh /* ... etc ... */) {
-      return POSE_STATES.POSE_INCOMPLETE;
-  }
+    const {
+      nose, left_shoulder: ls, right_shoulder: rs,
+      left_hip: lh, right_hip: rh,
+      left_wrist: lw, right_wrist: rw,
+      left_elbow: le, right_elbow: re
+    } = es;
 
-  const shoulderMidY = (ls.y + rs.y) / 2,
-        shoulderMidX = (ls.x + rs.x) / 2,
-        hipMidY = (lh.y + rh.y) / 2,
-        hipMidX = (lh.x + rh.x) / 2,
-        currentTorsoHeight = Math.abs(shoulderMidY - hipMidY), // Renamed for clarity
-        shoulderWidth = Math.abs(ls.x - rs.x);
-
-  if (currentTorsoHeight < CONFIG.minTorsoHeight || shoulderWidth < CONFIG.minShoulderWidth) {
-    return POSE_STATES.POSE_LOST;
-  }
-
-  // ---- DUCK LOGIC REVISION ----
-  const torsoChangedSignificantly = gameState.lastTorsoHeight != null &&
-      Math.abs(currentTorsoHeight - gameState.lastTorsoHeight) / gameState.lastTorsoHeight > CONFIG.torsoChangeThreshold;
-
-  // Update standingNoseY, standingTorsoHeight and potentially ducking state:
-  // 1. If standingNoseY is not initialized.
-  // 2. Or if torso size changed significantly (user moved closer/further).
-  //    In this case, assume the user is standing at the new distance, so reset references.
-  //    Also, critically, reset ducking state as the reference point has changed.
-  if (!gameState.standingNoseY || torsoChangedSignificantly) {
-    gameState.standingNoseY = nose.y;
-    gameState.standingTorsoHeight = currentTorsoHeight; // <<< STORED HERE
-    if (torsoChangedSignificantly) {
-      gameState.ducking = false; // Reset ducking if distance changed significantly
-      console.log(`Recalibrated standingNoseY: ${gameState.standingNoseY.toFixed(1)}, standingTorsoHeight: ${gameState.standingTorsoHeight.toFixed(1)} due to torso change.`);
-    } else {
-      console.log(`Initialized standingNoseY: ${gameState.standingNoseY.toFixed(1)}, standingTorsoHeight: ${gameState.standingTorsoHeight.toFixed(1)}.`);
+    if (!nose || !ls || !rs || !lh || !rh || !lw || !rw || !le || !re) {
+        return POSE_STATES.POSE_INCOMPLETE;
     }
+
+    const shoulderMidY = (ls.y + rs.y) / 2,
+          shoulderMidX = (ls.x + rs.x) / 2,
+          hipMidY = (lh.y + rh.y) / 2,
+          hipMidX = (lh.x + rh.x) / 2,
+          torsoHeight = Math.abs(shoulderMidY - hipMidY),
+          shoulderWidth = Math.abs(ls.x - rs.x);
+
+    if (torsoHeight < CONFIG.minTorsoHeight || shoulderWidth < CONFIG.minShoulderWidth) {
+      return POSE_STATES.POSE_LOST;
+    }
+
+    // Update body scale based on current dimensions
+    const bodyScale = _updateBodyScale(torsoHeight, shoulderWidth);
+    
+    // Update standing height tracking
+    const standingNoseY = _updateStandingHeight(nose, torsoHeight);
+    
+    gameState.lastTorsoHeight = torsoHeight;
+
+    // Debug values
+    updateDebugValue('Torso Height', torsoHeight);
+    updateDebugValue('Shoulder Width', shoulderWidth);
+    updateDebugValue('Standing Nose Y', standingNoseY);
+    updateDebugValue('Current Nose Y', nose.y);
+    
+    // Improved duck detection logic that accounts for distance
+    if (standingNoseY) {
+      // Calculate drop in pixels and normalize by the torso height
+      const dropPixels = nose.y - standingNoseY;
+      const normalizedDrop = dropPixels / torsoHeight;
+      
+      // Calculate a dynamic threshold that accounts for body proportions
+      // This makes duck detection work at any distance
+      const shoulderHipDistance = Math.sqrt(
+        Math.pow(shoulderMidX - hipMidX, 2) + 
+        Math.pow(shoulderMidY - hipMidY, 2)
+      );
+      const dynamicThreshold = CONFIG.duckThresholdRatio * (shoulderHipDistance / torsoHeight);
+      
+      updateDebugValue('Drop Pixels', dropPixels);
+      updateDebugValue('Normalized Drop', normalizedDrop);
+      updateDebugValue('Duck Threshold', dynamicThreshold);
+      
+      // Consider both absolute drop in pixels and the normalized drop
+      const minRequiredDrop = CONFIG.minimumDuckDistance * bodyScale;
+      
+      if (!gameState.ducking && dropPixels > minRequiredDrop && normalizedDrop > dynamicThreshold) {
+          gameState.ducking = true;
+      }
+      else if (gameState.ducking && (dropPixels < minRequiredDrop * 0.5 || normalizedDrop < dynamicThreshold * 0.5)) {
+          gameState.ducking = false;
+      }
+      
+      updateDebugValue('Is Ducking', gameState.ducking);
+    }
+
+    if (gameState.ducking) {
+        return POSE_STATES.DUCK;
+    }
+
+    const leanOffset = shoulderMidX - hipMidX;
+    const leanThresh = CONFIG.leanThresholdX * shoulderWidth;
+
+    updateDebugValue('Lean Offset', leanOffset);
+    updateDebugValue('Lean Threshold', leanThresh);
+
+    if (leanOffset > leanThresh) return POSE_STATES.LEAN_LEFT;
+    if (leanOffset < -leanThresh) return POSE_STATES.LEAN_RIGHT;
+
+    const leftPunch = _checkPunch(lw, le, ls, true, shoulderMidY, shoulderWidth);
+    const rightPunch = _checkPunch(rw, re, rs, false, shoulderMidY, shoulderWidth);
+
+    if (leftPunch && rightPunch) return POSE_STATES.PUNCH_BOTH;
+    if (leftPunch) return POSE_STATES.PUNCH_LEFT;
+    if (rightPunch) return POSE_STATES.PUNCH_RIGHT;
+
+    return POSE_STATES.IDLE;
   }
-  // Update lastTorsoHeight for the *next* frame's torsoChangedSignificantly calculation.
-  gameState.lastTorsoHeight = currentTorsoHeight;
 
-  // DUCK DETECTION
-  // Use the stored standingTorsoHeight for normalization. Fallback to currentTorsoHeight if somehow not set.
-  const referenceTorsoHeight = gameState.standingTorsoHeight || currentTorsoHeight;
-  const normalizedDrop = gameState.standingNoseY && referenceTorsoHeight > 0 ?
-                         (nose.y - gameState.standingNoseY) / referenceTorsoHeight : 0;
-
-  // Enter duck state: User was not ducking, and nose drop is significant.
-  if (!gameState.ducking && gameState.standingNoseY && normalizedDrop > CONFIG.duckThresholdRatio) {
-      gameState.ducking = true;
-      // console.log(`DUCK ENTER: nose.y=${nose.y.toFixed(1)}, standingNoseY=${gameState.standingNoseY.toFixed(1)}, refTorsoH=${referenceTorsoHeight.toFixed(1)}, normDrop=${normalizedDrop.toFixed(2)}`);
-  }
-  // Exit duck state: User was ducking, and nose drop is no longer significant.
-  else if (gameState.ducking && gameState.standingNoseY && normalizedDrop < CONFIG.duckThresholdRatio * 0.7) { // Adjusted exit threshold slightly
-      gameState.ducking = false;
-      // Recalibrate to current nose Y and torso height when standing up from a duck
-      gameState.standingNoseY = nose.y;
-      gameState.standingTorsoHeight = currentTorsoHeight; // <<< ALSO STORED HERE
-      console.log(`DUCK EXIT & Recalibrate: nose.y=${nose.y.toFixed(1)}, new standingTorsoHeight=${gameState.standingTorsoHeight.toFixed(1)}, normDrop=${normalizedDrop.toFixed(2)}`);
-  }
-
-  if (gameState.ducking) {
-      return POSE_STATES.DUCK;
-  }
-  // ---- END DUCK LOGIC REVISION ----
-
-  // ... (rest of the pose logic: lean, punch, idle - same as before) ...
-  const leanOffset = shoulderMidX - hipMidX;
-  const leanThresh = CONFIG.leanThresholdX * shoulderWidth;
-
-  if (leanOffset > leanThresh) return POSE_STATES.LEAN_LEFT;
-  if (leanOffset < -leanThresh) return POSE_STATES.LEAN_RIGHT;
-
-  const leftPunch = _checkPunch(lw, le, ls, true, shoulderMidY, shoulderWidth);
-  const rightPunch = _checkPunch(rw, re, rs, false, shoulderMidY, shoulderWidth);
-
-  if (leftPunch && rightPunch) return POSE_STATES.PUNCH_BOTH;
-  if (leftPunch) return POSE_STATES.PUNCH_LEFT;
-  if (rightPunch) return POSE_STATES.PUNCH_RIGHT;
-
-  return POSE_STATES.IDLE;
-}
   function drawKeypoints(ctx) { // ctx is already scaled
     ctx.fillStyle = 'lime';
     ctx.strokeStyle = 'yellow';
@@ -444,6 +571,89 @@ body, html {
       // For simplicity, let's keep it scaled for now.
       ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
       ctx.fill();
+      ctx.stroke();
+    }
+    
+    // Draw standing height reference line if available
+    if (gameState.standingNoseY) {
+      ctx.beginPath();
+      ctx.strokeStyle = gameState.ducking ? 'red' : 'cyan';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]);
+      ctx.moveTo(0, gameState.standingNoseY);
+      ctx.lineTo(ctx.canvas.width, gameState.standingNoseY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    
+    // Connect keypoints for better visualization
+    if (gameState.smoothedKeypoints.nose && gameState.smoothedKeypoints.left_shoulder && 
+        gameState.smoothedKeypoints.right_shoulder) {
+      const nose = gameState.smoothedKeypoints.nose;
+      const ls = gameState.smoothedKeypoints.left_shoulder;
+      const rs = gameState.smoothedKeypoints.right_shoulder;
+      
+      // Draw head to shoulders
+      ctx.beginPath();
+      ctx.strokeStyle = 'aqua';
+      ctx.lineWidth = 2;
+      ctx.moveTo(nose.x, nose.y);
+      ctx.lineTo(ls.x, ls.y);
+      ctx.moveTo(nose.x, nose.y);
+      ctx.lineTo(rs.x, rs.y);
+      ctx.stroke();
+    }
+    
+    // Draw shoulders to hips
+    if (gameState.smoothedKeypoints.left_shoulder && gameState.smoothedKeypoints.right_shoulder &&
+        gameState.smoothedKeypoints.left_hip && gameState.smoothedKeypoints.right_hip) {
+      const ls = gameState.smoothedKeypoints.left_shoulder;
+      const rs = gameState.smoothedKeypoints.right_shoulder;
+      const lh = gameState.smoothedKeypoints.left_hip;
+      const rh = gameState.smoothedKeypoints.right_hip;
+      
+      ctx.beginPath();
+      ctx.strokeStyle = 'aqua';
+      ctx.lineWidth = 2;
+      ctx.moveTo(ls.x, ls.y);
+      ctx.lineTo(rs.x, rs.y);
+      ctx.moveTo(ls.x, ls.y);
+      ctx.lineTo(lh.x, lh.y);
+      ctx.moveTo(rs.x, rs.y);
+      ctx.lineTo(rh.x, rh.y);
+      ctx.moveTo(lh.x, lh.y);
+      ctx.lineTo(rh.x, rh.y);
+      ctx.stroke();
+    }
+    
+    // Draw arms
+    if (gameState.smoothedKeypoints.left_shoulder && gameState.smoothedKeypoints.left_elbow &&
+        gameState.smoothedKeypoints.left_wrist) {
+      const ls = gameState.smoothedKeypoints.left_shoulder;
+      const le = gameState.smoothedKeypoints.left_elbow;
+      const lw = gameState.smoothedKeypoints.left_wrist;
+      
+      ctx.beginPath();
+      ctx.strokeStyle = 'aqua';
+      ctx.lineWidth = 2;
+      ctx.moveTo(ls.x, ls.y);
+      ctx.lineTo(le.x, le.y);
+      ctx.lineTo(lw.x, lw.y);
+      ctx.stroke();
+    }
+    
+    if (gameState.smoothedKeypoints.right_shoulder && gameState.smoothedKeypoints.right_elbow &&
+        gameState.smoothedKeypoints.right_wrist) {
+      const rs = gameState.smoothedKeypoints.right_shoulder;
+      const re = gameState.smoothedKeypoints.right_elbow;
+      const rw = gameState.smoothedKeypoints.right_wrist;
+      
+      ctx.beginPath();
+      ctx.strokeStyle = 'aqua';
+      ctx.lineWidth = 2;
+      ctx.moveTo(rs.x, rs.y);
+      ctx.lineTo(re.x, re.y);
+      ctx.lineTo(rw.x, rw.y);
       ctx.stroke();
     }
   }
@@ -469,7 +679,8 @@ body, html {
         if (integerConfigVars.includes(varName)) {
             input.step = "1";
         } else {
-            input.step = (varName === 'minPoseConfidence' || varName === 'poseSmoothFactor' || varName === 'torsoChangeThreshold') ? "0.01" : "0.1";
+            input.step = (varName === 'minPoseConfidence' || varName === 'poseSmoothFactor' || 
+                          varName === 'torsoChangeThreshold' || varName === 'shoulderHipDistanceMultiplier') ? "0.01" : "0.1";
         }
         varRowDiv.appendChild(input);
 
