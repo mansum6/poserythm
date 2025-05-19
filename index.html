@@ -12,72 +12,238 @@
 }
 </script>
 <style>
-body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-serif; }
-#poseText { font-size:4.5rem; text-align:center; padding:10px; min-height: 1.5em; /* Ensure space */}
-#container { position:relative; width:640px; height: 480px; margin:0 auto; border: 1px solid #444;}
-#video { width:100%; height:100%; transform: scaleX(-1); object-fit: cover;}
-#overlay { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; transform: scaleX(-1); }
+body, html {
+    margin:0;
+    padding:0;
+    background:#222;
+    color:#fff;
+    font-family:sans-serif;
+    height: 100vh; /* Full viewport height */
+    overflow: hidden; /* Prevent body scrollbars */
+}
 
+#app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+}
+
+/* 1. Pose Info Area (Top 20%) */
+#pose-info-area {
+    flex: 0 0 20%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background-color: #2a2a2a;
+    padding: 5px;
+    box-sizing: border-box;
+}
+#poseText {
+    font-size: clamp(1.5rem, 8vh, 4.5rem); /* Responsive font size */
+    text-align:center;
+    color: #eee;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 2. Video Area (Middle 40%) */
+#video-area {
+    flex: 0 0 40%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #1c1c1c;
+    overflow: hidden; /* Important for scaling content */
+    padding: 5px; /* Optional padding around video container */
+    box-sizing: border-box;
+}
+#container {
+    position:relative;
+    /* width: 640px; height: 480px; */ /* Old fixed size */
+    /* New responsive size maintaining 4:3 aspect ratio */
+    aspect-ratio: 640 / 480;
+    height: 100%; /* Fill the height of video-area */
+    max-width: 100%; /* Don't exceed width of video-area */
+    margin:0 auto; /* Center if aspect ratio makes it narrower than area */
+    border: 1px solid #444;
+    background: #000; /* Background for letter/pillar boxing */
+}
+#video {
+    display: block; /* Remove extra space below video */
+    width:100%;
+    height:100%;
+    transform: scaleX(-1);
+    object-fit: contain; /* Show whole frame, scaled down, letter/pillar boxed */
+}
+#overlay {
+    position:absolute;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    pointer-events:none;
+    transform: scaleX(-1); /* Mirrors the canvas drawing space */
+}
+
+/* 3. Config Area (Below Middle 35%) */
+#config-area {
+    flex: 0 0 35%;
+    background-color: #252525;
+    overflow-y: auto; /* Scroll if content exceeds height */
+    padding: 10px;
+    box-sizing: border-box;
+}
 #controlsContainer {
-    padding: 15px;
-    margin: 20px auto; /* Center it */
+    padding: 10px;
+    margin: 0 auto;
     border: 1px solid #555;
     border-radius: 8px;
     background-color: #333;
     color: #fff;
-    width: fit-content; /* Adjust to content size */
-    max-width: 600px; /* Max width */
+    max-width: 700px; /* Max width for readability */
 }
-#controlsContainer h3 { margin-top: 0; margin-bottom: 15px; text-align: center; }
-#controlsContainer div { margin-bottom: 10px; display: flex; align-items: center; flex-wrap: wrap; }
-#controlsContainer label { margin-right: 10px; min-width: 220px; /* Align inputs */ }
-#controlsContainer select, #controlsContainer input[type="number"] {
-    padding: 8px;
+#controlsContainer h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    text-align: center;
+    color: #0af;
+}
+#config-vars-list div { /* Each config row */
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap; /* Wrap on small screens if needed */
+    padding: 5px;
+    border-bottom: 1px solid #404040;
+}
+#config-vars-list div:last-child {
+    border-bottom: none;
+}
+#controlsContainer label {
     margin-right: 10px;
+    min-width: 230px; /* Align inputs */
+    font-size: 0.9em;
+    color: #ccc;
+}
+#controlsContainer input[type="number"] {
+    padding: 6px 8px;
     border: 1px solid #555;
     background-color: #444;
     color: #fff;
     border-radius: 4px;
-    flex-grow: 1;
+    width: 100px;
+    max-width:120px;
+    margin-right: 10px;
 }
-#controlsContainer input[type="number"] { width: 100px; max-width:120px; flex-grow: 0;}
 #controlsContainer button {
-    padding: 8px 15px;
+    padding: 6px 12px;
     background-color: #007bff;
     color: white;
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    font-size: 0.9em;
     margin-left: auto; /* Pushes button to the right if space allows */
 }
 #controlsContainer button:hover { background-color: #0056b3; }
-#configStatus { font-size: 0.9em; min-height: 1em; margin-top: 10px; text-align: center; }
+#configStatus {
+    font-size: 0.9em;
+    min-height: 1.2em;
+    margin-top: 15px;
+    text-align: center;
+    color: #7f7;
+}
+
+/* 4. Console Output Area (Bottom 5%) */
+#console-output-area {
+    flex: 0 0 5%;
+    background-color: #111;
+    color: #ccc;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 0.8em;
+    overflow-y: auto;
+    border-top: 1px solid #444;
+    box-sizing: border-box;
+}
+#console-output-area p {
+    margin: 2px 0;
+    padding: 0;
+    white-space: pre-wrap; /* Allow wrapping but preserve spaces */
+}
+#console-output-area p.error { color: #ff6b6b; }
+#console-output-area p.warn { color: #ffa500; }
+#console-output-area p.log { color: #ccc; }
+
 </style>
 </head>
 <body>
-<div id="poseText">Loading…</div>
-<div id="container">
-<video id="video" autoplay playsinline></video>
-<canvas id="overlay"></canvas>
-</div>
 
-<div id="controlsContainer">
-  <h3>Adjust Configuration</h3>
-  <div>
-    <label for="configVarSelect">Variable:</label>
-    <select id="configVarSelect"></select>
-  </div>
-  <div>
-    <label for="configVarInput">Value:</label>
-    <input type="number" id="configVarInput"> <!-- Step will be set by JS -->
-    <button id="applyConfigBtn">Apply</button>
-  </div>
-  <p id="configStatus"></p>
+<div id="app-container">
+    <div id="pose-info-area">
+        <div id="poseText">Loading…</div>
+    </div>
+
+    <div id="video-area">
+        <div id="container">
+            <video id="video" autoplay playsinline muted></video> <!-- Added muted for autoplay policies -->
+            <canvas id="overlay"></canvas>
+        </div>
+    </div>
+
+    <div id="config-area">
+        <div id="controlsContainer">
+          <h3>Adjust Configuration</h3>
+          <div id="config-vars-list">
+            <!-- Config variables will be dynamically inserted here by JS -->
+          </div>
+          <p id="configStatus"></p>
+        </div>
+    </div>
+
+    <div id="console-output-area">
+        <!-- Console messages will be displayed here -->
+    </div>
 </div>
 
 <script type="module">
   import * as tf from '@tensorflow/tfjs';
   import * as poseDetection from '@tensorflow-models/pose-detection';
+
+  const consoleOutputDiv = document.getElementById('console-output-area');
+
+  function logToScreen(message, type = 'log') {
+    if (!consoleOutputDiv) return;
+    const p = document.createElement('p');
+    const GTMtimestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'});
+    p.textContent = `[${GTMtimestamp} ${type.toUpperCase()}]: ${message}`;
+    p.className = type; // for styling (error, warn, log)
+    consoleOutputDiv.appendChild(p);
+    // Auto-scroll to the bottom
+    consoleOutputDiv.scrollTop = consoleOutputDiv.scrollHeight;
+  }
+
+  // Intercept console messages
+  const originalConsoleLog = console.log;
+  const originalConsoleError = console.error;
+  const originalConsoleWarn = console.warn;
+
+  console.log = (...args) => {
+    originalConsoleLog.apply(console, args);
+    logToScreen(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' '), 'log');
+  };
+  console.error = (...args) => {
+    originalConsoleError.apply(console, args);
+    logToScreen(args.map(arg => String(arg)).join(' '), 'error');
+  };
+  console.warn = (...args) => {
+    originalConsoleWarn.apply(console, args);
+    logToScreen(args.map(arg => String(arg)).join(' '), 'warn');
+  };
+
 
   // CONFIG & STATE
   const CONFIG = {
@@ -85,8 +251,8 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
     poseSmoothFactor: 0.8,     // float
     minTorsoHeight: 30,        // integer
     minShoulderWidth: 30,      // integer
-    torsoChangeThreshold: 0.05,// float (as per your last setting)
-    duckThresholdRatio: 1,     // float (as per your last setting, consider increasing if ducks are too easy)
+    torsoChangeThreshold: 0.05,// float
+    duckThresholdRatio: 1,     // float
     leanThresholdX: 0.15,      // float
     punchThresholdX: 0.3,      // float
     temporarilyIncompleteDurationMs: 500, // integer
@@ -111,7 +277,6 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
     "right_wrist", "left_elbow", "right_elbow"
   ];
 
-  // Helper array to determine input step for config UI
   const integerConfigVars = ['minTorsoHeight', 'minShoulderWidth', 'temporarilyIncompleteDurationMs'];
 
   let gameState = {
@@ -206,44 +371,30 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
       return POSE_STATES.POSE_LOST;
     }
 
-    // ---- DUCK LOGIC REVISION ----
     const torsoChangedSignificantly = gameState.lastTorsoHeight != null &&
         Math.abs(torsoHeight - gameState.lastTorsoHeight) / gameState.lastTorsoHeight > CONFIG.torsoChangeThreshold;
 
-    // Update standingNoseY and potentially ducking state:
-    // 1. If standingNoseY is not initialized.
-    // 2. Or if torso size changed significantly (user moved closer/further).
-    //    In this case, assume the user is standing at the new distance, so reset standingNoseY.
-    //    Also, critically, reset ducking state as the reference point has changed.
     if (!gameState.standingNoseY || torsoChangedSignificantly) {
       gameState.standingNoseY = nose.y;
       if (torsoChangedSignificantly) {
-        gameState.ducking = false; // Reset ducking if distance changed
+        gameState.ducking = false;
       }
     }
-    // Update lastTorsoHeight for the *next* frame's torsoChangedSignificantly calculation.
     gameState.lastTorsoHeight = torsoHeight;
 
-    // DUCK DETECTION
-    // normalizedDrop uses the (potentially just updated) standingNoseY.
     const normalizedDrop = gameState.standingNoseY && torsoHeight > 0 ? (nose.y - gameState.standingNoseY) / torsoHeight : 0;
 
-    // Enter duck state: User was not ducking, and nose drop is significant.
     if (!gameState.ducking && gameState.standingNoseY && normalizedDrop > CONFIG.duckThresholdRatio) {
         gameState.ducking = true;
     }
-    // Exit duck state: User was ducking, and nose drop is no longer significant.
     else if (gameState.ducking && gameState.standingNoseY && normalizedDrop < CONFIG.duckThresholdRatio * 0.5) {
         gameState.ducking = false;
-        gameState.standingNoseY = nose.y; // Recalibrate to current nose Y when standing up from a duck
+        gameState.standingNoseY = nose.y;
     }
 
-    // If, after all checks, we are in a duck state, return DUCK
     if (gameState.ducking) {
         return POSE_STATES.DUCK;
     }
-    // ---- END DUCK LOGIC REVISION ----
-
 
     const leanOffset = shoulderMidX - hipMidX;
     const leanThresh = CONFIG.leanThresholdX * shoulderWidth;
@@ -261,18 +412,19 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
     return POSE_STATES.IDLE;
   }
 
-  function drawKeypoints(ctx) {
+  function drawKeypoints(ctx) { // ctx is already scaled
     ctx.fillStyle = 'lime';
     ctx.strokeStyle = 'yellow';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2; // This lineWidth will be scaled. If you want constant screen width, adjust by scale factor.
 
-    // Draw smoothed keypoints
-    // Since both video and overlay are scaledX(-1), raw coordinates should work
     for (let n of essentialNames) {
       const kp = gameState.smoothedKeypoints[n];
       if (!kp || kp.score < CONFIG.minPoseConfidence) continue;
 
       ctx.beginPath();
+      // The radius '5' will also be scaled by ctx.scale(). If you want a fixed screen-space radius,
+      // you'd need to divide by the current scale, e.g., 5 / Math.sqrt(ctx.getTransform().a * ctx.getTransform().d)
+      // For simplicity, let's keep it scaled for now.
       ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
       ctx.fill();
       ctx.stroke();
@@ -280,61 +432,64 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
   }
 
   function setupConfigControls() {
-    const varSelect = document.getElementById('configVarSelect');
-    const varInput = document.getElementById('configVarInput');
-    const applyBtn = document.getElementById('applyConfigBtn');
+    const configVarsListDiv = document.getElementById('config-vars-list');
     const statusP = document.getElementById('configStatus');
+    configVarsListDiv.innerHTML = ''; // Clear previous (if any)
 
-    // Populate dropdown
-    Object.keys(CONFIG).forEach(varName => {
-      const option = document.createElement('option');
-      option.value = varName;
-      option.textContent = varName;
-      varSelect.appendChild(option);
-    });
+    Object.entries(CONFIG).forEach(([varName, currentValue]) => {
+        const varRowDiv = document.createElement('div');
 
-    function updateInputForSelectedVar() {
-        const selectedVar = varSelect.value;
-        varInput.value = CONFIG[selectedVar];
-        if (integerConfigVars.includes(selectedVar)) {
-            varInput.step = "1";
+        const label = document.createElement('label');
+        label.htmlFor = `config_input_${varName}`;
+        label.textContent = `${varName}:`;
+        varRowDiv.appendChild(label);
+
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.id = `config_input_${varName}`;
+        input.value = currentValue;
+
+        if (integerConfigVars.includes(varName)) {
+            input.step = "1";
         } else {
-            // For floats, a smaller step is usually better
-            varInput.step = (selectedVar === 'minPoseConfidence' || selectedVar === 'poseSmoothFactor' || selectedVar === 'torsoChangeThreshold') ? "0.01" : "0.1";
+            input.step = (varName === 'minPoseConfidence' || varName === 'poseSmoothFactor' || varName === 'torsoChangeThreshold') ? "0.01" : "0.1";
         }
-        statusP.textContent = ''; // Clear status on var change
-    }
+        varRowDiv.appendChild(input);
 
-    varSelect.value = 'torsoChangeThreshold'; // Default as requested
-    updateInputForSelectedVar(); // Initialize input field
+        const applyBtn = document.createElement('button');
+        applyBtn.textContent = 'Update';
+        applyBtn.dataset.varname = varName;
+        varRowDiv.appendChild(applyBtn);
 
-    varSelect.addEventListener('change', updateInputForSelectedVar);
+        applyBtn.addEventListener('click', () => {
+            const selectedVar = varName;
+            const newValueStr = input.value;
+            let newValue;
 
-    applyBtn.addEventListener('click', () => {
-      const selectedVar = varSelect.value;
-      const newValueStr = varInput.value;
-      let newValue;
+            if (integerConfigVars.includes(selectedVar)) {
+                newValue = parseInt(newValueStr, 10);
+            } else {
+                newValue = parseFloat(newValueStr);
+            }
 
-      if (integerConfigVars.includes(selectedVar)) {
-        newValue = parseInt(newValueStr, 10);
-      } else {
-        newValue = parseFloat(newValueStr);
-      }
+            if (isNaN(newValue)) {
+                statusP.textContent = `Error: Invalid number for ${selectedVar}.`;
+                statusP.style.color = '#ff6b6b'; // Reddish
+                input.value = CONFIG[selectedVar]; // Reset to current valid value
+                return;
+            }
 
-      if (isNaN(newValue)) {
-        statusP.textContent = `Error: Invalid number for ${selectedVar}.`;
-        statusP.style.color = 'red';
-        varInput.value = CONFIG[selectedVar]; // Reset to current valid value
-        return;
-      }
-
-      CONFIG[selectedVar] = newValue;
-      // varInput.value = CONFIG[selectedVar]; // Reflect the potentially parsed/corrected value
-      statusP.textContent = `${selectedVar} updated to ${CONFIG[selectedVar]}.`;
-      statusP.style.color = '#7f7'; // Light green for dark background
-      console.log('CONFIG updated:', JSON.parse(JSON.stringify(CONFIG)));
+            CONFIG[selectedVar] = newValue;
+            input.value = newValue; // Reflect the potentially parsed/corrected value
+            statusP.textContent = `${selectedVar} updated to ${CONFIG[selectedVar]}.`;
+            statusP.style.color = '#7f7'; // Light green
+            console.log('CONFIG updated:', JSON.parse(JSON.stringify(CONFIG)));
+        });
+        configVarsListDiv.appendChild(varRowDiv);
     });
+    statusP.textContent = 'Config loaded. Adjust values and click "Update".';
   }
+
 
   async function main() {
     await tf.setBackend('webgl');
@@ -344,49 +499,82 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
     const video = document.getElementById('video'),
           canvas = document.getElementById('overlay'),
           ctx = canvas.getContext('2d'),
-          poseText = document.getElementById('poseText');
+          poseTextEl = document.getElementById('poseText');
 
-    setupConfigControls(); // Initialize the UI controls
+    setupConfigControls();
 
     const stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
     video.srcObject = stream;
-    await new Promise(r => video.onloadedmetadata = r); // Wait for metadata
-    video.play();
+    await new Promise(r => video.onloadedmetadata = r);
+    video.play().catch(e => {
+        console.error("Video play failed:", e);
+        logToScreen("Video play failed. User interaction might be needed.", "error");
+    });
 
-    // Match canvas size to video element size (which might be different from video stream size if object-fit is used)
-    canvas.width = video.clientWidth;
-    canvas.height = video.clientHeight;
-    // If you want canvas resolution to match video intrinsic resolution:
-    // canvas.width = video.videoWidth;
-    // canvas.height = video.videoHeight;
-
+    // Canvas dimensions will be set relative to video element's client size in frameLoop
+    // This handles responsive scaling due to `object-fit: contain` and parent container size.
 
     const detector = await poseDetection.createDetector(
       poseDetection.SupportedModels.MoveNet,
       {modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING}
     );
 
-    poseText.innerText = 'Ready!';
+    poseTextEl.innerText = 'Ready!';
 
     async function frameLoop() {
-      // Ensure canvas size is updated if video element resizes (e.g. responsive design)
-      if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
-          canvas.width = video.clientWidth;
-          canvas.height = video.clientHeight;
+      // Match canvas logical size to video's intrinsic size for coordinate mapping,
+      // but its display size to the video element's display size.
+      // The video element itself scales via CSS object-fit: contain.
+      // The canvas element is stretched to the video element's bounds.
+      // We need to scale the drawing operations.
+
+      if (video.readyState < video.HAVE_METADATA || video.paused || video.ended) {
+          requestAnimationFrame(frameLoop);
+          return;
       }
 
-      // Pass the video element. flipHorizontal is false by default for movenet.
-      // The mirroring is handled by CSS transform on the video and canvas elements.
-      const poses = await detector.estimatePoses(video);
+      // Set canvas display size to match video element's current display size
+      if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+          canvas.width = video.clientWidth;   // display width
+          canvas.height = video.clientHeight; // display height
+      }
+
+      const poses = await detector.estimatePoses(video, {flipHorizontal: false}); // flipHorizontal false as CSS handles mirroring
       const estimatedState = interpretPose(poses[0]?.keypoints || []);
 
       if (estimatedState !== POSE_STATES.POSE_TEMPORARILY_INCOMPLETE) {
-        poseText.innerText = estimatedState;
+        poseTextEl.innerText = estimatedState;
       }
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (poses[0]?.keypoints) {
-          drawKeypoints(ctx);
+
+      if (poses[0]?.keypoints && video.videoWidth > 0 && video.videoHeight > 0) {
+          ctx.save();
+
+          // Calculate scaling factors based on video content size vs. canvas display size.
+          // This correctly handles letterboxing/pillarboxing from 'object-fit: contain'.
+          const videoAspectRatio = video.videoWidth / video.videoHeight;
+          const canvasAspectRatio = canvas.width / canvas.height;
+          let renderWidth, renderHeight, offsetX = 0, offsetY = 0;
+
+          if (videoAspectRatio > canvasAspectRatio) { // Video is wider than canvas aspect ratio (letterboxed)
+              renderWidth = canvas.width;
+              renderHeight = renderWidth / videoAspectRatio;
+              offsetY = (canvas.height - renderHeight) / 2;
+          } else { // Video is taller or same aspect ratio (pillarboxed or exact fit)
+              renderHeight = canvas.height;
+              renderWidth = renderHeight * videoAspectRatio;
+              offsetX = (canvas.width - renderWidth) / 2;
+          }
+
+          // Move to the corner of the actual video content on the canvas
+          ctx.translate(offsetX, offsetY);
+          // Scale the context to draw keypoints (which are in video.videoWidth/Height coords)
+          // onto the renderWidth/renderHeight area on the canvas.
+          ctx.scale(renderWidth / video.videoWidth, renderHeight / video.videoHeight);
+
+          drawKeypoints(ctx); // drawKeypoints uses original video coordinates
+          ctx.restore();
       }
       requestAnimationFrame(frameLoop);
     }
@@ -395,8 +583,8 @@ body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-
   }
 
   main().catch(e => {
-    console.error(e);
-    document.getElementById('poseText').innerText = 'Error: ' + e.message;
+    console.error(e); // This will also call logToScreen
+    document.getElementById('poseText').innerText = 'Critical Error!'; // Keep this for major init errors
   });
   </script>
 </body>
