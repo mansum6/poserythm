@@ -162,6 +162,10 @@
       canvasCtx = canvasElement.getContext('2d');
       
       try {
+        // Initialize TensorFlow.js backend
+        updateStatus("Initializing TensorFlow.js...");
+        await tf.ready();
+        updateStatus(`Using TensorFlow backend: ${tf.getBackend()}`);
         // Setup webcam
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user' }
