@@ -277,27 +277,33 @@ body, html {
   };
 
   function _smoothAndGetKeypoint(name, kpMap) {
-    // ... (remains the same, but ensure kpMap uses raw keypoints)
-    const kp = kpMap[name];
-    if(!kp || kp.score < CONFIG.minPoseConfidence) { // Check confidence here
-        delete gameState.smoothedKeypoints[name]; // Remove smoothed if original is lost/bad
-        return null;
+    const kp = kpMap[name]; // Raw keypoint from MoveNet
+
+    // Primary filter: if raw keypoint is missing or its score is too low, DON'T use it or its old smoothed version.
+    if (!kp || kp.score < CONFIG.minPoseConfidence) {
+        // If we were tracking this keypoint, clear its smoothed data because current raw data is bad.
+        if (gameState.smoothedKeypoints[name]) {
+            // console.warn(`Raw kp '${name}' lost or low score (${kp?.score?.toFixed(2)}), clearing smoothed.`);
+            delete gameState.smoothedKeypoints[name];
+        }
+        return null; // Indicate this keypoint is not usable for this frame
     }
 
+    // If we reach here, the raw keypoint 'kp' is present and has sufficient score.
     let sk = gameState.smoothedKeypoints[name];
-    if(!sk || sk.rawScore < CONFIG.minPoseConfidence ) { // Also check if smoothed version was based on previously bad raw
-      sk = {x: kp.x, y: kp.y, score: kp.score, rawScore: kp.score}; // Store rawScore for future checks
-      gameState.smoothedKeypoints[name] = sk;
-      return sk;
-    }
 
-    const f = CONFIG.poseSmoothFactor;
-    sk.x = f * sk.x + (1-f) * kp.x;
-    sk.y = f * sk.y + (1-f) * kp.y;
-    sk.score = kp.score; // Smoothed score is the latest raw score
-    sk.rawScore = kp.score;
+    if (!sk) { // If no smoothed version exists yet (first time or after being cleared)
+        sk = { x: kp.x, y: kp.y, score: kp.score, rawScore: kp.score }; // Initialize with raw
+        gameState.smoothedKeypoints[name] = sk;
+    } else { // Smooth existing sk with new kp
+        const f = CONFIG.poseSmoothFactor;
+        sk.x = f * sk.x + (1 - f) * kp.x;
+        sk.y = f * sk.y + (1 - f) * kp.y;
+        sk.score = kp.score; // Smoothed score is the latest raw score
+        sk.rawScore = kp.score; // Keep track of the raw score that informed this smoothed point
+    }
     return sk;
-  }
+}
 
   function _checkPunch(w, e, s, isLeft, shoulderMidY, shoulderWidth) { /* ... (remains the same) ... */
     if(!w || !e || !s) return false;
@@ -310,17 +316,30 @@ body, html {
   }
 
 
-  function calibrateStandingPose(sKp) { // sKp are smoothed keypoint objects
+function calibrateStandingPose(sKp) { // sKp are smoothed keypoint objects
+    // Check if smoothed keypoints themselves exist (they should if canAttemptCalibration was true)
     if (!sKp.nose || !sKp.ls || !sKp.rs || !sKp.lh || !sKp.rh) {
-        console.warn("Calibration skipped: Missing essential keypoints for calibration.");
+        console.warn("Calibration function called but sKp parts missing. This shouldn't happen if 'canAttemptCalibration' worked.");
+        gameState.isProperlyCalibrated = false; // Ensure it's false
         return false;
     }
 
-    // Check scores of raw keypoints used for calibration
+    // Log incoming smoothed keypoints rawScores
+    // console.log("calibrateStandingPose received sKp rawScores:", {
+    //     nose: sKp.nose.rawScore?.toFixed(2), ls: sKp.ls.rawScore?.toFixed(2), rs: sKp.rs.rawScore?.toFixed(2),
+    //     lh: sKp.lh.rawScore?.toFixed(2), rh: sKp.rh.rawScore?.toFixed(2)
+    // }, "Min req for calib:", CONFIG.minScoreForCalibrationKeypoints);
+
+
     const calibMinScore = CONFIG.minScoreForCalibrationKeypoints;
-    if (sKp.nose.rawScore < calibMinScore || sKp.ls.rawScore < calibMinScore || sKp.rs.rawScore < calibMinScore ||
-        sKp.lh.rawScore < calibMinScore || sKp.rh.rawScore < calibMinScore) {
-        console.warn(`Calibration skipped: Keypoint scores too low. N:${sKp.nose.rawScore?.toFixed(2)} LS:${sKp.ls.rawScore?.toFixed(2)} RS:${sKp.rs.rawScore?.toFixed(2)} LH:${sKp.lh.rawScore?.toFixed(2)} RH:${sKp.rh.rawScore?.toFixed(2)}`);
+    // Ensure rawScore property exists before checking
+    if (!sKp.nose.rawScore || sKp.nose.rawScore < calibMinScore ||
+        !sKp.ls.rawScore  || sKp.ls.rawScore  < calibMinScore ||
+        !sKp.rs.rawScore  || sKp.rs.rawScore  < calibMinScore ||
+        !sKp.lh.rawScore  || sKp.lh.rawScore  < calibMinScore ||
+        !sKp.rh.rawScore  || sKp.rh.rawScore  < calibMinScore) {
+        console.warn(`Calibration failed: Keypoint raw scores too low or missing. N:${sKp.nose.rawScore?.toFixed(2)} LS:${sKp.ls.rawScore?.toFixed(2)} RS:${sKp.rs.rawScore?.toFixed(2)} LH:${sKp.lh.rawScore?.toFixed(2)} RH:${sKp.rh.rawScore?.toFixed(2)}`);
+        gameState.isProperlyCalibrated = false; // Ensure it's false
         return false;
     }
 
@@ -329,15 +348,21 @@ body, html {
 
     gameState.calibratedStandingNoseY = sKp.nose.y;
     gameState.calibratedTorsoHeight = Math.abs(shoulderMidY - hipMidY);
+    // Ensure torso height is somewhat reasonable before calibrating
+    if (gameState.calibratedTorsoHeight < CONFIG.minTorsoHeight / 2) { // Check against a fraction of minTorsoHeight
+        console.warn(`Calibration failed: Calibrated torso height (${gameState.calibratedTorsoHeight.toFixed(0)}) too small.`);
+        gameState.isProperlyCalibrated = false;
+        return false;
+    }
+
     gameState.calibratedShoulderWidth = Math.abs(sKp.ls.x - sKp.rs.x);
     gameState.isProperlyCalibrated = true;
-    gameState.ducking = false; // Always reset ducking on recalibration
+    gameState.ducking = false;
 
     console.log(`Pose Recalibrated: NoseY=${gameState.calibratedStandingNoseY.toFixed(0)}, TorsoH=${gameState.calibratedTorsoHeight.toFixed(0)}, ShoulderW=${gameState.calibratedShoulderWidth.toFixed(0)}`);
     return true;
   }
-
-function interpretPose(rawKeypoints) {
+  function interpretPose(rawKeypoints){
     if (!rawKeypoints || rawKeypoints.length === 0) {
         gameState.temporarilyIncompleteEntryTime = 0; // Reset timer
         gameState.isProperlyCalibrated = false; // Lose calibration if pose is lost
@@ -351,94 +376,117 @@ function interpretPose(rawKeypoints) {
     essentialNames.forEach(name => {
         sKp[name] = _smoothAndGetKeypoint(name, kpMap);
     });
-
     const { nose, left_shoulder: ls, right_shoulder: rs, left_hip: lh, right_hip: rh,
             left_elbow: le, right_elbow: re, left_wrist: lw, right_wrist: rw } = sKp;
 
     // --- Calibration Logic ---
-    let needsRecalibration = false;
-    let canCalibrateNow = nose && ls && rs && lh && rh; // Check if smoothed versions are available
+    let performedCalibrationThisFrame = false;
 
-    if (canCalibrateNow) {
-        const currentTorsoHeight = Math.abs(((ls.y + rs.y) / 2) - ((lh.y + rh.y) / 2));
+    // Conditions for attempting calibration (either initial or reactive)
+    const canAttemptCalibration = nose && ls && rs && lh && rh; // Basic smoothed keypoints must exist
+
+    if (canAttemptCalibration) {
+        const currentTorsoHeightForCalib = Math.abs(((ls.y + rs.y) / 2) - ((lh.y + rh.y) / 2));
+        let triggerCalibration = false;
+
         if (!gameState.isProperlyCalibrated) {
-            // Try initial calibration if system just started or lost calibration
-            // Let's require an IDLE state for initial calibration to avoid calibrating mid-action.
-            // This check will be done after state determination.
-            needsRecalibration = true; // Flag for potential calibration
+            triggerCalibration = true; // Always try if not yet calibrated
+            // console.log("Attempting INITIAL calibration trigger.");
         } else {
-            // Check if existing calibration is stale due to distance change
+            // Check for reactive recalibration due to distance change
             if (gameState.calibratedTorsoHeight > 0 && // Avoid division by zero
-                Math.abs(currentTorsoHeight - gameState.calibratedTorsoHeight) / gameState.calibratedTorsoHeight > CONFIG.recalibrationTorsoChangeThreshold) {
-                console.log("Recalibration triggered by torso height change.");
-                needsRecalibration = true;
+                Math.abs(currentTorsoHeightForCalib - gameState.calibratedTorsoHeight) / gameState.calibratedTorsoHeight > CONFIG.recalibrationTorsoChangeThreshold) {
+                console.log("Attempting REACTIVE recalibration trigger due to torso height change.");
+                triggerCalibration = true;
             }
         }
-        if (needsRecalibration) {
-            if (calibrateStandingPose(sKp)) { // Pass smoothed keypoints
-                 // Successfully recalibrated
+
+        if (triggerCalibration) {
+            console.log("Calling calibrateStandingPose with sKp:", {
+                nose: sKp.nose?.rawScore, ls: sKp.ls?.rawScore, rs: sKp.rs?.rawScore, lh: sKp.lh?.rawScore, rh: sKp.rh?.rawScore
+            });
+            if (calibrateStandingPose(sKp)) { // calibrateStandingPose sets gameState.isProperlyCalibrated
+                performedCalibrationThisFrame = true;
+                // console.log("Calibration successful this frame. gameState.isProperlyCalibrated:", gameState.isProperlyCalibrated);
             } else {
-                 canCalibrateNow = false; // Calibration failed, likely due to low scores
-                 needsRecalibration = false; // Reset flag
+                // console.warn("Calibration attempt failed this frame.");
+                // If it failed, gameState.isProperlyCalibrated remains false or its old value
             }
         }
     }
 
+    // If calibration just happened successfully, consider the pose IDLE for this frame
+    // and skip other pose checks for this frame.
+    if (performedCalibrationThisFrame && gameState.isProperlyCalibrated) {
+        // console.log("Returning IDLE immediately after successful calibration.");
+        gameState.temporarilyIncompleteEntryTime = 0; // Reset timer
+        return POSE_STATES.IDLE;
+    }
 
-    // --- Handle Truly Lost or Minimal Poses ---
+    // If still not calibrated after attempting, return CALIBRATING
+    if (!gameState.isProperlyCalibrated) {
+        // console.log("Still not calibrated, returning CALIBRATING.");
+        return POSE_STATES.CALIBRATING;
+    }
+
+    // --- If calibrated, proceed to other checks (DUCK, POSE_LOST, INCOMPLETE, etc.) ---
+    // console.log("Proceeding with pose checks as system is calibrated.");
+
+    // --- Handle Truly Lost or Minimal Poses (AFTER calibration check) ---
     if (!nose || !ls || !rs) { // Absolute minimum: nose and shoulders
-        gameState.isProperlyCalibrated = false; // Lose calibration
-        // Simplified incomplete logic for now
+        // gameState.isProperlyCalibrated = false; // Don't immediately lose calibration here, POSE_LOST/INCOMPLETE might be temporary
         if (gameState.temporarilyIncompleteEntryTime === 0) gameState.temporarilyIncompleteEntryTime = performance.now();
         if (performance.now() - gameState.temporarilyIncompleteEntryTime < CONFIG.temporarilyIncompleteDurationMs) {
             return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
         }
-        return POSE_STATES.POSE_INCOMPLETE; // Or POSE_LOST if more stringent
+        gameState.isProperlyCalibrated = false; // OK, lose calibration if incomplete for too long
+        return POSE_STATES.POSE_INCOMPLETE;
     }
 
-    // --- Duck Detection ---
-    let determinedPose = null; // Will hold the pose if decided early (e.g. DUCK)
+    // ... (rest of the DUCK detection logic, LEAN, PUNCH, etc.)
+    // Make sure the DUCK logic also correctly uses the now-guaranteed gameState.isProperlyCalibrated = true
 
-    if (gameState.isProperlyCalibrated) {
-        const currentShoulderWidth = ls && rs ? Math.abs(ls.x - rs.x) : 0;
-        const effectiveNoseDropRatio = gameState.calibratedTorsoHeight > 0 ?
-                                     (nose.y - gameState.calibratedStandingNoseY) / gameState.calibratedTorsoHeight : 0;
+    // --- Duck Detection --- (This block relies on gameState.isProperlyCalibrated being true)
+    let determinedPose = null;
 
-        // 1. Deep Duck Inference (can override missing hips/wrists)
-        if (le && re && // Elbows are important for deep duck orientation
-            currentShoulderWidth > 0 && Math.abs(currentShoulderWidth - gameState.calibratedShoulderWidth) <= gameState.calibratedShoulderWidth * CONFIG.duckShoulderWidthToleranceRatio &&
-            effectiveNoseDropRatio > CONFIG.deepDuckNoseDropFactor)
-        {
+    // (The DUCK logic from previous version, it already implicitly assumes calibration)
+    // No need to check gameState.isProperlyCalibrated again inside here if the flow guarantees it.
+    const currentShoulderWidth = ls && rs ? Math.abs(ls.x - rs.x) : 0;
+    const effectiveNoseDropRatio = gameState.calibratedTorsoHeight > 0 ?
+                                 (nose.y - gameState.calibratedStandingNoseY) / gameState.calibratedTorsoHeight : 0;
+
+    // 1. Deep Duck Inference
+    if (le && re &&
+        currentShoulderWidth > 0 && Math.abs(currentShoulderWidth - gameState.calibratedShoulderWidth) <= gameState.calibratedShoulderWidth * CONFIG.duckShoulderWidthToleranceRatio &&
+        effectiveNoseDropRatio > CONFIG.deepDuckNoseDropFactor) {
+        gameState.ducking = true;
+        determinedPose = POSE_STATES.DUCK;
+    }
+    // 2. Standard Duck
+    else if (lh && rh && le && re && lw && rw) {
+        if (!gameState.ducking && effectiveNoseDropRatio > CONFIG.duckThresholdRatio) {
             gameState.ducking = true;
-            determinedPose = POSE_STATES.DUCK;
-            // console.log("Deep DUCK inferred.");
-        }
-        // 2. Standard Duck (requires all keypoints if not deep duck)
-        else if (lh && rh && le && re && lw && rw) { // All essentials needed for standard evaluation
-            if (!gameState.ducking && effectiveNoseDropRatio > CONFIG.duckThresholdRatio) {
-                gameState.ducking = true;
-                // console.log("Standard DUCK entered.");
-            } else if (gameState.ducking && effectiveNoseDropRatio < CONFIG.duckThresholdRatio * CONFIG.duckExitFactor) {
-                gameState.ducking = false;
-                console.log("Standard DUCK exited, recalibrating.");
-                // Recalibrate on exiting duck, as user might be in a new standing position
-                if(canCalibrateNow) calibrateStandingPose(sKp); // sKp contains all required points for calib here
+        } else if (gameState.ducking && effectiveNoseDropRatio < CONFIG.duckThresholdRatio * CONFIG.duckExitFactor) {
+            gameState.ducking = false;
+            console.log("Standard DUCK exited, attempting recalibration.");
+            // Recalibrate on exiting duck
+            if (canAttemptCalibration) { // Check if we still have good points for it
+                 calibrateStandingPose(sKp); // This will update calibration values
             }
         }
-        // If still ducking after checks, this is the pose
-        if (gameState.ducking && !determinedPose) {
-             determinedPose = POSE_STATES.DUCK;
-        }
+    }
+    if (gameState.ducking && !determinedPose) {
+         determinedPose = POSE_STATES.DUCK;
     }
 
+
     if (determinedPose === POSE_STATES.DUCK) {
-        gameState.temporarilyIncompleteEntryTime = 0; // Reset timer if a valid pose (DUCK) is found
+        gameState.temporarilyIncompleteEntryTime = 0;
         return POSE_STATES.DUCK;
     }
 
 
-    // --- Full Pose Check for Other Poses (if not ducking) ---
-    // All essential keypoints must be present for any other pose.
+    // --- Full Pose Check for Other Poses ---
     const allEssentialsPresent = nose && ls && rs && lh && rh && le && re && lw && rw;
 
     if (!allEssentialsPresent) {
@@ -446,34 +494,21 @@ function interpretPose(rawKeypoints) {
         if (performance.now() - gameState.temporarilyIncompleteEntryTime < CONFIG.temporarilyIncompleteDurationMs) {
             return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
         }
-        gameState.isProperlyCalibrated = false; // If incomplete for too long, lose calibration
+        gameState.isProperlyCalibrated = false; // Lose calibration
         return POSE_STATES.POSE_INCOMPLETE;
     }
-
-    // If we reach here, all essential keypoints are present, and we are not ducking.
-    gameState.temporarilyIncompleteEntryTime = 0; // Reset incomplete timer
-
-    // Initial Calibration on first stable IDLE-like pose
-    if (!gameState.isProperlyCalibrated && canCalibrateNow) { // canCalibrateNow implies nose, shoulders, hips are good
-        console.log("Attempting initial calibration on stable pose.");
-        calibrateStandingPose(sKp);
-        if(gameState.isProperlyCalibrated) return POSE_STATES.IDLE; // Return IDLE for one frame post-calibration
-        else return POSE_STATES.CALIBRATING; // Still waiting for good calib
-    }
-    if (!gameState.isProperlyCalibrated) return POSE_STATES.CALIBRATING;
+    gameState.temporarilyIncompleteEntryTime = 0;
 
 
-    // Recalculate some metrics with all smoothed keypoints assured
+    // Recalculate metrics with all smoothed keypoints assured
     const shoulderMidY = (ls.y + rs.y) / 2;
     const shoulderMidX = (ls.x + rs.x) / 2;
     const hipMidY = (lh.y + rh.y) / 2;
     const hipMidX = (lh.x + rh.x) / 2;
     const currentTorsoHeight = Math.abs(shoulderMidY - hipMidY);
-    const currentShoulderWidth = Math.abs(ls.x - rs.x);
+    // currentShoulderWidth already calculated
 
     if (currentTorsoHeight < CONFIG.minTorsoHeight || currentShoulderWidth < CONFIG.minShoulderWidth) {
-        // This check seems redundant if calibration is working, but good as a fallback
-        // console.warn("Pose lost due to min height/width fail after other checks.");
         return POSE_STATES.POSE_LOST; // Or INCOMPLETE
     }
 
@@ -492,8 +527,7 @@ function interpretPose(rawKeypoints) {
     if (rightPunch) return POSE_STATES.PUNCH_RIGHT;
 
     return POSE_STATES.IDLE;
-}
-
+  }
 
   function drawKeypoints(ctx) { /* ... (remains the same, ensure it uses gameState.smoothedKeypoints) ... */
     ctx.fillStyle = 'lime';
