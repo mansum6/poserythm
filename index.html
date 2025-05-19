@@ -1,533 +1,403 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>MoveNet Pose Detector</title>
-  <style>
-    body, html { 
-      margin: 0; 
-      height: 100vh; /* Use vh for full viewport height */
-      display: flex; 
-      flex-direction: column;
-      font-family: Arial, sans-serif;
-      background-color: #f0f0f0;
-      overflow: hidden; /* Prevent body scrollbars */
-    }
-    #poseDisplay { 
-      flex: 0 0 20%; 
-      font-size: 4em; 
-      text-align: center;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background-color: #333;
-      color: #fff;
-      margin: 0;
-      font-weight: bold;
-      text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
-    }
-    #videoContainer { 
-      flex: 0 0 40%; 
-      position: relative;
-      display: flex;
-      justify-content: center;
-      align-items: center; /* Center video if it's pillar/letterboxed */
-      background-color: #222;
-      overflow: hidden; /* Ensure video/canvas don't overflow */
-    }
-    #webcam {
-      height: 100%;
-      width: 100%;
-      object-fit: contain; /* Scale video to fit, maintain aspect ratio */
-      max-height: 100%; /* Ensure it doesn't exceed container */
-      max-width: 100%;  /* Ensure it doesn't exceed container */
-      /* position: absolute; - Not needed if videoContainer uses flex to center */
-    }
-    #overlay {
-      height: 100%;
-      width: 100%; /* Match video container for scaling */
-      max-height: 100%;
-      max-width: 100%;
-      position: absolute; /* Overlay on top of video */
-      top: 0;
-      left: 0;
-      pointer-events: none; /* Allow interaction with video if needed */
-      z-index: 10;
-    }
-    #controls { 
-      flex: 0 0 35%; /* Adjusted height */
-      padding: 1em; 
-      overflow-y: auto; /* Scroll if content overflows */
-      background-color: #fff;
-      box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
-    }
-    .control-group {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-      grid-gap: 15px;
-      margin-bottom: 20px;
-    }
-    .control-item {
-      display: flex;
-      flex-direction: column;
-    }
-    .control-item label {
-      margin-bottom: 5px;
-      font-weight: bold;
-      color: #555;
-    }
-    .control-item input {
-      padding: 8px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-    }
-    button {
-      background-color: #4285f4;
-      color: white;
-      border: none;
-      padding: 10px 15px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 16px;
-      transition: background-color 0.3s;
-      margin-top: 10px;
-    }
-    button:hover {
-      background-color: #3367d6;
-    }
-    /* Removed .status class as its element is gone */
+<meta charset="UTF-8" />
+<title>Pose Detector</title>
+<script type="importmap">
+{
+"imports": {
+"@tensorflow/tfjs": "https://esm.sh/@tensorflow/tfjs@4.20.0",
+"@tensorflow-models/pose-detection": "https://cdn.skypack.dev/@tensorflow-models/pose-detection@2.1.3"
+}
+}
+</script>
+<style>
+body, html { margin:0; padding:0; background:#222; color:#fff; font-family:sans-serif; }
+#poseText { font-size:4.5rem; text-align:center; padding:10px; min-height: 1.5em; /* Ensure space */}
+#container { position:relative; width:640px; height: 480px; margin:0 auto; border: 1px solid #444;}
+#video { width:100%; height:100%; transform: scaleX(-1); object-fit: cover;}
+#overlay { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; transform: scaleX(-1); }
 
-    #consoleArea {
-      flex: 0 0 5%; /* Bottom 5% */
-      background-color: #1e1e1e;
-      color: #d4d4d4;
-      padding: 8px;
-      overflow-y: auto;
-      font-family: 'Consolas', 'Courier New', monospace;
-      font-size: 0.85em;
-      border-top: 1px solid #333;
-      box-sizing: border-box;
-    }
-    #consoleArea .log-entry {
-      margin-bottom: 4px;
-      white-space: pre-wrap; /* Allow wrapping and preserve newlines */
-      word-break: break-all;
-    }
-    #consoleArea .log-entry .timestamp {
-      color: #888;
-      margin-right: 5px;
-    }
-    #consoleArea .log-error {
-      color: #f48771; /* Softer red */
-    }
-    #consoleArea .log-info {
-      color: #4ec9b0; /* Teal for info */
-    }
-    #consoleArea .log-message { /* Default log messages */
-      color: #9cdcfe; /* Light blue for default console.log */
-    }
-
-  </style>
-  <script type="importmap">
-  {
-    "imports": {
-      "@tensorflow/tfjs": "https://esm.sh/@tensorflow/tfjs@4.20.0",
-      "@tensorflow-models/pose-detection": "https://cdn.skypack.dev/@tensorflow-models/pose-detection@2.1.3"
-    }
-  }
-  </script>
+#controlsContainer {
+    padding: 15px;
+    margin: 20px auto; /* Center it */
+    border: 1px solid #555;
+    border-radius: 8px;
+    background-color: #333;
+    color: #fff;
+    width: fit-content; /* Adjust to content size */
+    max-width: 600px; /* Max width */
+}
+#controlsContainer h3 { margin-top: 0; margin-bottom: 15px; text-align: center; }
+#controlsContainer div { margin-bottom: 10px; display: flex; align-items: center; flex-wrap: wrap; }
+#controlsContainer label { margin-right: 10px; min-width: 220px; /* Align inputs */ }
+#controlsContainer select, #controlsContainer input[type="number"] {
+    padding: 8px;
+    margin-right: 10px;
+    border: 1px solid #555;
+    background-color: #444;
+    color: #fff;
+    border-radius: 4px;
+    flex-grow: 1;
+}
+#controlsContainer input[type="number"] { width: 100px; max-width:120px; flex-grow: 0;}
+#controlsContainer button {
+    padding: 8px 15px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-left: auto; /* Pushes button to the right if space allows */
+}
+#controlsContainer button:hover { background-color: #0056b3; }
+#configStatus { font-size: 0.9em; min-height: 1em; margin-top: 10px; text-align: center; }
+</style>
 </head>
 <body>
-  <div id="poseDisplay">Initializing...</div>
-  <div id="videoContainer">
-    <video id="webcam" autoplay muted playsinline></video>
-    <canvas id="overlay"></canvas>
+<div id="poseText">Loading…</div>
+<div id="container">
+<video id="video" autoplay playsinline></video>
+<canvas id="overlay"></canvas>
+</div>
+
+<div id="controlsContainer">
+  <h3>Adjust Configuration</h3>
+  <div>
+    <label for="configVarSelect">Variable:</label>
+    <select id="configVarSelect"></select>
   </div>
-  <div id="controls">
-    <h2>Pose Detection Settings</h2>
-    <div id="controlInputs" class="control-group">
-      <!-- Dynamically generated inputs for CONFIG go here -->
-    </div>
-    <button id="resetBtn">Reset Defaults</button>
-    <!-- Removed status div from here -->
+  <div>
+    <label for="configVarInput">Value:</label>
+    <input type="number" id="configVarInput"> <!-- Step will be set by JS -->
+    <button id="applyConfigBtn">Apply</button>
   </div>
-  <div id="consoleArea">
-    <!-- Console messages will appear here -->
-  </div>
+  <p id="configStatus"></p>
+</div>
 
-  <script type="module">
-    import * as tf from '@tensorflow/tfjs';
-    import * as poseDetection from '@tensorflow-models/pose-detection';
+<script type="module">
+  import * as tf from '@tensorflow/tfjs';
+  import * as poseDetection from '@tensorflow-models/pose-detection';
 
-    let consoleAreaElement = null;
-    const OGLOG = console.log;
-    const OGERROR = console.error;
+  // CONFIG & STATE
+  const CONFIG = {
+    minPoseConfidence: 0.3,    // float
+    poseSmoothFactor: 0.8,     // float
+    minTorsoHeight: 30,        // integer
+    minShoulderWidth: 30,      // integer
+    torsoChangeThreshold: 0.05,// float (as per your last setting)
+    duckThresholdRatio: 1,     // float (as per your last setting, consider increasing if ducks are too easy)
+    leanThresholdX: 0.15,      // float
+    punchThresholdX: 0.3,      // float
+    temporarilyIncompleteDurationMs: 500, // integer
+  };
 
-    function logToPanel(message, type = 'message') { // type can be 'message', 'info', 'error'
-        if (!consoleAreaElement) { // Fallback to browser console if UI element not ready
-            (type === 'error' ? OGERROR : OGLOG)(message);
-            return;
-        }
-        const entry = document.createElement('div');
-        entry.className = 'log-entry';
+  const POSE_STATES = {
+    IDLE: 'IDLE',
+    PUNCH_LEFT: 'PUNCH_LEFT',
+    PUNCH_RIGHT: 'PUNCH_RIGHT',
+    LEAN_LEFT: 'LEAN_LEFT',
+    LEAN_RIGHT: 'LEAN_RIGHT',
+    DUCK: 'DUCK',
+    POSE_TEMPORARILY_INCOMPLETE: 'POSE_TEMPORARILY_INCOMPLETE',
+    POSE_INCOMPLETE: 'POSE_INCOMPLETE',
+    PUNCH_BOTH: 'PUNCH_BOTH',
+    POSE_LOST: 'POSE_LOST'
+  };
 
-        const timestampSpan = document.createElement('span');
-        timestampSpan.className = 'timestamp';
-        timestampSpan.textContent = `[${new Date().toLocaleTimeString()}]`;
-        
-        const messageSpan = document.createElement('span');
-        messageSpan.textContent = message;
+  const essentialNames = [
+    "nose", "left_shoulder", "right_shoulder",
+    "left_hip", "right_hip", "left_wrist",
+    "right_wrist", "left_elbow", "right_elbow"
+  ];
 
-        entry.appendChild(timestampSpan);
-        entry.appendChild(messageSpan);
+  // Helper array to determine input step for config UI
+  const integerConfigVars = ['minTorsoHeight', 'minShoulderWidth', 'temporarilyIncompleteDurationMs'];
 
-        if (type === 'error') {
-            entry.classList.add('log-error');
-        } else if (type === 'info') {
-            entry.classList.add('log-info');
+  let gameState = {
+    smoothedKeypoints: {},
+    lastTorsoHeight: null,
+    standingNoseY: null,
+    ducking: false,
+    temporarilyIncompleteEntryTime: 0,
+  };
+
+  function _smoothAndGetKeypoint(name, map) {
+    const kp = map[name];
+    if(!kp) return null;
+
+    let sk = gameState.smoothedKeypoints[name];
+    if(!sk) {
+      sk = {x: kp.x, y: kp.y, score: kp.score};
+      gameState.smoothedKeypoints[name] = sk;
+      return sk;
+    }
+
+    const f = CONFIG.poseSmoothFactor;
+    sk.x = f * sk.x + (1-f) * kp.x;
+    sk.y = f * sk.y + (1-f) * kp.y;
+    sk.score = kp.score;
+    return sk;
+  }
+
+  function _checkPunch(w, e, s, isLeft, shoulderMidY, shoulderWidth) {
+    if(!w || !e || !s) return false;
+
+    const wristAhead = isLeft ? (w.x > e.x && e.x > s.x) : (w.x < e.x && e.x < s.x);
+    if(!wristAhead) return false;
+
+    const seDist = Math.abs(s.x - e.x),
+          ewDist = Math.abs(e.x - w.x),
+          alignedY = Math.abs(w.y - shoulderMidY) < shoulderWidth * 0.6;
+
+    return seDist > 5 && ewDist > CONFIG.punchThresholdX * seDist && alignedY;
+  }
+
+  function interpretPose(keypoints) {
+    if (!keypoints || keypoints.length === 0) {
+      gameState.temporarilyIncompleteEntryTime = 0;
+      return POSE_STATES.POSE_LOST;
+    }
+
+    const kpMap = Object.fromEntries(
+      keypoints.filter(p => p.name && p.score >= CONFIG.minPoseConfidence)
+               .map(p => [p.name, p])
+    );
+
+    const essentialKeypointsPresent = essentialNames.every(n => kpMap[n]);
+
+    if (!essentialKeypointsPresent) {
+      if (gameState.temporarilyIncompleteEntryTime === 0) {
+        gameState.temporarilyIncompleteEntryTime = performance.now();
+        return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
+      } else {
+        if (performance.now() - gameState.temporarilyIncompleteEntryTime < CONFIG.temporarilyIncompleteDurationMs) {
+          return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
         } else {
-            entry.classList.add('log-message');
-        }
-        
-        consoleAreaElement.appendChild(entry);
-        consoleAreaElement.scrollTop = consoleAreaElement.scrollHeight;
-    }
-    
-    console.log = function(...args) {
-        OGLOG.apply(console, args); // Keep original browser console behavior
-        const message = args.map(arg => (typeof arg === 'object' && arg !== null) ? JSON.stringify(arg, null, 2) : String(arg)).join(' ');
-        logToPanel(message, 'message');
-    };
-
-    console.error = function(...args) {
-        OGERROR.apply(console, args); // Keep original browser console behavior
-        let messageContent = args.map(arg => {
-            if (arg instanceof Error) {
-                return `${arg.name ? arg.name + ": " : ""}${arg.message}${arg.stack ? `\nStack: ${arg.stack}` : ''}`;
-            }
-            return (typeof arg === 'object' && arg !== null) ? JSON.stringify(arg, null, 2) : String(arg);
-        }).join(' ');
-        logToPanel(messageContent, 'error');
-    };
-
-
-    // 1. Define keypoints & states
-    const essentialKeypointNames = [
-      "nose", "left_shoulder", "right_shoulder",
-      "left_hip", "right_hip", "left_wrist",
-      "right_wrist", "left_elbow", "right_elbow"
-    ];
-    
-    const POSE_STATES = {
-      IDLE: 'IDLE',
-      LEAN_LEFT: 'LEAN LEFT',
-      LEAN_RIGHT: 'LEAN RIGHT',
-      DUCK: 'DUCK',
-      PUNCH_LEFT: 'PUNCH LEFT',
-      PUNCH_RIGHT: 'PUNCH RIGHT',
-      PUNCH_BOTH: 'PUNCH BOTH',
-      POSE_TEMPORARILY_INCOMPLETE: 'POSE INCOMPLETE (TEMP)',
-      POSE_INCOMPLETE: 'POSE INCOMPLETE',
-      POSE_LOST: 'POSE LOST'
-    };
-
-    // 2. Central CONFIG with default values
-    const CONFIG = {
-      leanAngleThreshold: 15,
-      duckYThreshold: 0.2,
-      punchExtensionThreshold: 0.3,
-      incompleteGracePeriod: 15,
-      smoothingFactor: 0.8
-    };
-
-    // Default CONFIG for reset
-    const DEFAULT_CONFIG = { ...CONFIG };
-
-    // Global variables
-    let detector;
-    let webcamElement, canvasElement, canvasCtx;
-    let currentPose = POSE_STATES.POSE_LOST;
-    let smoothedKeypoints = [];
-    let incompleteFrameCount = 0;
-    let baselineNoseY = null;
-    let videoStreamActive = false;
-    
-    // 3. Setup webcam and model
-    async function init() {
-      webcamElement = document.getElementById('webcam');
-      canvasElement = document.getElementById('overlay');
-      canvasCtx = canvasElement.getContext('2d');
-      
-      try {
-        logToPanel("Initializing TensorFlow.js...", 'info');
-        await tf.ready();
-        logToPanel(`Using TensorFlow backend: ${tf.getBackend()}`, 'info');
-        
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' }
-        });
-        webcamElement.srcObject = stream;
-        
-        await new Promise(resolve => {
-          webcamElement.onloadedmetadata = () => {
-            webcamElement.play(); // Start playing the video
-            videoStreamActive = true;
-
-            // Set canvas dimensions to match video's intrinsic dimensions
-            // CSS will handle scaling the display of both video and canvas
-            const videoWidth = webcamElement.videoWidth;
-            const videoHeight = webcamElement.videoHeight;
-            
-            // These set the drawing surface size, not the display size
-            canvasElement.width = videoWidth;
-            canvasElement.height = videoHeight;
-
-            // Adjust #overlay CSS if video is letterboxed/pillarboxed by object-fit: contain
-            // This ensures the canvas drawing area is precisely over the visible video.
-            const videoCssWidth = webcamElement.clientWidth;
-            const videoCssHeight = webcamElement.clientHeight;
-            
-            // Calculate scale factors if video is letterboxed/pillarboxed
-            const scaleX = videoCssWidth / videoWidth;
-            const scaleY = videoCssHeight / videoHeight;
-            const scale = Math.min(scaleX, scaleY); // Use the smaller scale to fit
-
-            const effectiveCanvasWidth = videoWidth * scale;
-            const effectiveCanvasHeight = videoHeight * scale;
-
-            // Center the canvas overlay over the 'contained' video
-            canvasElement.style.width = `${effectiveCanvasWidth}px`;
-            canvasElement.style.height = `${effectiveCanvasHeight}px`;
-            canvasElement.style.left = `${(videoCssWidth - effectiveCanvasWidth) / 2}px`;
-            canvasElement.style.top = `${(videoCssHeight - effectiveCanvasHeight) / 2}px`;
-            
-            logToPanel(`Webcam initialized: ${videoWidth}x${videoHeight}. Displayed: ${videoCssWidth}x${videoCssHeight}`, 'info');
-            resolve();
-          };
-        });
-                
-        logToPanel("Loading MoveNet model...", 'info');
-        detector = await poseDetection.createDetector(
-          poseDetection.SupportedModels.MoveNet,
-          {
-            modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
-            enableSmoothing: false 
-          }
-        );
-        logToPanel("MoveNet loaded! Detecting poses...", 'info');
-        
-        detectPose();
-      } catch (error) {
-        console.error("Initialization Error:", error); // Will also log to panel
-      }
-    }
-
-    // 4. Main loop
-    async function detectPose() {
-      if (detector && webcamElement.readyState === 4 && videoStreamActive) {
-        try {
-          const poses = await detector.estimatePoses(webcamElement);
-          
-          if (poses.length > 0) {
-            const pose = poses[0];
-            smoothedKeypoints = smoothKeypoints(pose.keypoints, smoothedKeypoints);
-            classifyPose(smoothedKeypoints);
-            renderOverlay(smoothedKeypoints);
-          } else {
-            handlePoseLost();
-          }
-        } catch (error) {
-          console.error('Error in pose detection loop:', error);
+          return POSE_STATES.POSE_INCOMPLETE;
         }
       }
-      
-      requestAnimationFrame(detectPose);
     }
-    
-    function smoothKeypoints(newKeypoints, prevKeypoints) {
-      if (!prevKeypoints || prevKeypoints.length === 0) {
-        return [...newKeypoints];
+
+    gameState.temporarilyIncompleteEntryTime = 0;
+
+    const es = {};
+    for (let n of essentialNames) es[n] = _smoothAndGetKeypoint(n, kpMap);
+
+    const {
+      nose, left_shoulder: ls, right_shoulder: rs,
+      left_hip: lh, right_hip: rh,
+      left_wrist: lw, right_wrist: rw,
+      left_elbow: le, right_elbow: re
+    } = es;
+
+    if (!nose || !ls || !rs || !lh || !rh || !lw || !rw || !le || !re) {
+        return POSE_STATES.POSE_INCOMPLETE;
+    }
+
+    const shoulderMidY = (ls.y + rs.y) / 2,
+          shoulderMidX = (ls.x + rs.x) / 2,
+          hipMidY = (lh.y + rh.y) / 2,
+          hipMidX = (lh.x + rh.x) / 2,
+          torsoHeight = Math.abs(shoulderMidY - hipMidY),
+          shoulderWidth = Math.abs(ls.x - rs.x);
+
+    if (torsoHeight < CONFIG.minTorsoHeight || shoulderWidth < CONFIG.minShoulderWidth) {
+      return POSE_STATES.POSE_LOST;
+    }
+
+    // ---- DUCK LOGIC REVISION ----
+    const torsoChangedSignificantly = gameState.lastTorsoHeight != null &&
+        Math.abs(torsoHeight - gameState.lastTorsoHeight) / gameState.lastTorsoHeight > CONFIG.torsoChangeThreshold;
+
+    // Update standingNoseY and potentially ducking state:
+    // 1. If standingNoseY is not initialized.
+    // 2. Or if torso size changed significantly (user moved closer/further).
+    //    In this case, assume the user is standing at the new distance, so reset standingNoseY.
+    //    Also, critically, reset ducking state as the reference point has changed.
+    if (!gameState.standingNoseY || torsoChangedSignificantly) {
+      gameState.standingNoseY = nose.y;
+      if (torsoChangedSignificantly) {
+        gameState.ducking = false; // Reset ducking if distance changed
       }
-      const alpha = CONFIG.smoothingFactor; // Use current config
-      return newKeypoints.map((keypoint, i) => ({
-        ...keypoint,
-        x: alpha * prevKeypoints[i].x + (1 - alpha) * keypoint.x,
-        y: alpha * prevKeypoints[i].y + (1 - alpha) * keypoint.y,
-        score: keypoint.score
-      }));
     }
-    
-    function checkEssentialKeypoints(keypoints) {
-      const keypointMap = {};
-      keypoints.forEach(kp => keypointMap[kp.name] = kp);
-      const missingKeypoints = essentialKeypointNames.filter(name => 
-        !keypointMap[name] || keypointMap[name].score < 0.3
-      );
-      return {
-        allVisible: missingKeypoints.length === 0,
-        missingCount: missingKeypoints.length,
-        missing: missingKeypoints
-      };
+    // Update lastTorsoHeight for the *next* frame's torsoChangedSignificantly calculation.
+    gameState.lastTorsoHeight = torsoHeight;
+
+    // DUCK DETECTION
+    // normalizedDrop uses the (potentially just updated) standingNoseY.
+    const normalizedDrop = gameState.standingNoseY && torsoHeight > 0 ? (nose.y - gameState.standingNoseY) / torsoHeight : 0;
+
+    // Enter duck state: User was not ducking, and nose drop is significant.
+    if (!gameState.ducking && gameState.standingNoseY && normalizedDrop > CONFIG.duckThresholdRatio) {
+        gameState.ducking = true;
     }
-    
-    function calculateAngle(pointA, pointB, pointC) {
-      const angleAB = Math.atan2(pointB.y - pointA.y, pointB.x - pointA.x);
-      const angleBC = Math.atan2(pointC.y - pointB.y, pointC.x - pointB.x);
-      let angle = (angleAB - angleBC) * 180 / Math.PI;
-      if (angle < 0) angle += 360;
-      if (angle > 180) angle = 360 - angle;
-      return angle;
+    // Exit duck state: User was ducking, and nose drop is no longer significant.
+    else if (gameState.ducking && gameState.standingNoseY && normalizedDrop < CONFIG.duckThresholdRatio * 0.5) {
+        gameState.ducking = false;
+        gameState.standingNoseY = nose.y; // Recalibrate to current nose Y when standing up from a duck
     }
-    
-    function calculateDistance(pointA, pointB) {
-      return Math.sqrt(Math.pow(pointA.x - pointB.x, 2) + Math.pow(pointA.y - pointB.y, 2));
+
+    // If, after all checks, we are in a duck state, return DUCK
+    if (gameState.ducking) {
+        return POSE_STATES.DUCK;
     }
-    
-    function classifyPose(keypoints) {
-      const kp = {};
-      keypoints.forEach(keypoint => kp[keypoint.name] = keypoint);
-      const keypointCheck = checkEssentialKeypoints(keypoints);
-      
-      if (!keypointCheck.allVisible) {
-        if (keypointCheck.missingCount > essentialKeypointNames.length / 2) {
-          currentPose = POSE_STATES.POSE_LOST;
-          incompleteFrameCount = 0;
+    // ---- END DUCK LOGIC REVISION ----
+
+
+    const leanOffset = shoulderMidX - hipMidX;
+    const leanThresh = CONFIG.leanThresholdX * shoulderWidth;
+
+    if (leanOffset > leanThresh) return POSE_STATES.LEAN_LEFT;
+    if (leanOffset < -leanThresh) return POSE_STATES.LEAN_RIGHT;
+
+    const leftPunch = _checkPunch(lw, le, ls, true, shoulderMidY, shoulderWidth);
+    const rightPunch = _checkPunch(rw, re, rs, false, shoulderMidY, shoulderWidth);
+
+    if (leftPunch && rightPunch) return POSE_STATES.PUNCH_BOTH;
+    if (leftPunch) return POSE_STATES.PUNCH_LEFT;
+    if (rightPunch) return POSE_STATES.PUNCH_RIGHT;
+
+    return POSE_STATES.IDLE;
+  }
+
+  function drawKeypoints(ctx) {
+    ctx.fillStyle = 'lime';
+    ctx.strokeStyle = 'yellow';
+    ctx.lineWidth = 2;
+
+    // Draw smoothed keypoints
+    // Since both video and overlay are scaledX(-1), raw coordinates should work
+    for (let n of essentialNames) {
+      const kp = gameState.smoothedKeypoints[n];
+      if (!kp || kp.score < CONFIG.minPoseConfidence) continue;
+
+      ctx.beginPath();
+      ctx.arc(kp.x, kp.y, 5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+
+  function setupConfigControls() {
+    const varSelect = document.getElementById('configVarSelect');
+    const varInput = document.getElementById('configVarInput');
+    const applyBtn = document.getElementById('applyConfigBtn');
+    const statusP = document.getElementById('configStatus');
+
+    // Populate dropdown
+    Object.keys(CONFIG).forEach(varName => {
+      const option = document.createElement('option');
+      option.value = varName;
+      option.textContent = varName;
+      varSelect.appendChild(option);
+    });
+
+    function updateInputForSelectedVar() {
+        const selectedVar = varSelect.value;
+        varInput.value = CONFIG[selectedVar];
+        if (integerConfigVars.includes(selectedVar)) {
+            varInput.step = "1";
         } else {
-          incompleteFrameCount++;
-          currentPose = incompleteFrameCount < CONFIG.incompleteGracePeriod 
-                        ? POSE_STATES.POSE_TEMPORARILY_INCOMPLETE 
-                        : POSE_STATES.POSE_INCOMPLETE;
+            // For floats, a smaller step is usually better
+            varInput.step = (selectedVar === 'minPoseConfidence' || selectedVar === 'poseSmoothFactor' || selectedVar === 'torsoChangeThreshold') ? "0.01" : "0.1";
         }
-        document.getElementById('poseDisplay').textContent = currentPose;
+        statusP.textContent = ''; // Clear status on var change
+    }
+
+    varSelect.value = 'torsoChangeThreshold'; // Default as requested
+    updateInputForSelectedVar(); // Initialize input field
+
+    varSelect.addEventListener('change', updateInputForSelectedVar);
+
+    applyBtn.addEventListener('click', () => {
+      const selectedVar = varSelect.value;
+      const newValueStr = varInput.value;
+      let newValue;
+
+      if (integerConfigVars.includes(selectedVar)) {
+        newValue = parseInt(newValueStr, 10);
+      } else {
+        newValue = parseFloat(newValueStr);
+      }
+
+      if (isNaN(newValue)) {
+        statusP.textContent = `Error: Invalid number for ${selectedVar}.`;
+        statusP.style.color = 'red';
+        varInput.value = CONFIG[selectedVar]; // Reset to current valid value
         return;
       }
-      incompleteFrameCount = 0;
-      
-      if (baselineNoseY === null && kp.nose) baselineNoseY = kp.nose.y;
-      
-      let newPose = POSE_STATES.IDLE;
-      
-      if (baselineNoseY && kp.nose) {
-        const noseYDrop = (kp.nose.y - baselineNoseY) / canvasElement.height;
-        if (noseYDrop > CONFIG.duckYThreshold) newPose = POSE_STATES.DUCK;
-        else baselineNoseY = baselineNoseY * 0.95 + kp.nose.y * 0.05;
-      }
-      
-      if (kp.left_shoulder && kp.right_shoulder && kp.left_hip && kp.right_hip) {
-        const midShoulder = { x: (kp.left_shoulder.x + kp.right_shoulder.x) / 2, y: (kp.left_shoulder.y + kp.right_shoulder.y) / 2 };
-        const midHip = { x: (kp.left_hip.x + kp.right_hip.x) / 2, y: (kp.left_hip.y + kp.right_hip.y) / 2 };
-        const verticalAngle = Math.atan2(midShoulder.x - midHip.x, midHip.y - midShoulder.y) * 180 / Math.PI;
-        
-        if (verticalAngle < -CONFIG.leanAngleThreshold) newPose = POSE_STATES.LEAN_LEFT;
-        else if (verticalAngle > CONFIG.leanAngleThreshold) newPose = POSE_STATES.LEAN_RIGHT;
-      }
-      
-      if (newPose === POSE_STATES.IDLE && kp.left_shoulder && kp.right_shoulder && kp.left_wrist && kp.right_wrist) {
-        const shoulderWidth = calculateDistance(kp.left_shoulder, kp.right_shoulder);
-        const leftArmExtension = calculateDistance(kp.left_wrist, kp.left_shoulder) / shoulderWidth;
-        const rightArmExtension = calculateDistance(kp.right_wrist, kp.right_shoulder) / shoulderWidth;
-        const leftPunch = leftArmExtension > CONFIG.punchExtensionThreshold;
-        const rightPunch = rightArmExtension > CONFIG.punchExtensionThreshold;
-        
-        if (leftPunch && rightPunch) newPose = POSE_STATES.PUNCH_BOTH;
-        else if (leftPunch) newPose = POSE_STATES.PUNCH_LEFT;
-        else if (rightPunch) newPose = POSE_STATES.PUNCH_RIGHT;
-      }
-      
-      currentPose = newPose;
-      document.getElementById('poseDisplay').textContent = currentPose;
-    }
-    
-    function handlePoseLost() {
-      currentPose = POSE_STATES.POSE_LOST;
-      document.getElementById('poseDisplay').textContent = currentPose;
-      if (canvasCtx && canvasElement) {
-        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      }
-    }
-    
-    function renderOverlay(keypoints) {
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      keypoints.forEach(keypoint => {
-        if (keypoint.score > 0.3) {
-          canvasCtx.fillStyle = '#00FF00';
-          canvasCtx.beginPath();
-          canvasCtx.arc(keypoint.x, keypoint.y, 5, 0, 2 * Math.PI);
-          canvasCtx.fill();
-          // canvasCtx.fillStyle = 'white';
-          // canvasCtx.font = '12px Arial';
-          // canvasCtx.fillText(keypoint.name, keypoint.x + 8, keypoint.y);
-        }
-      });
-      
-      const connections = [
-        ['nose', 'left_eye'], ['nose', 'right_eye'], ['left_eye', 'left_ear'], ['right_eye', 'right_ear'],
-        ['nose', 'left_shoulder'], ['nose', 'right_shoulder'], ['left_shoulder', 'right_shoulder'],
-        ['left_shoulder', 'left_elbow'], ['right_shoulder', 'right_elbow'], ['left_elbow', 'left_wrist'], ['right_elbow', 'right_wrist'],
-        ['left_shoulder', 'left_hip'], ['right_shoulder', 'right_hip'], ['left_hip', 'right_hip'],
-        ['left_hip', 'left_knee'], ['right_hip', 'right_knee'], ['left_knee', 'left_ankle'], ['right_knee', 'right_ankle']
-      ];
-      const keypointMap = {};
-      keypoints.forEach(kp => keypointMap[kp.name] = kp);
-      
-      canvasCtx.strokeStyle = '#00FF00';
-      canvasCtx.lineWidth = 2;
-      connections.forEach(([from, to]) => {
-        const fromKP = keypointMap[from];
-        const toKP = keypointMap[to];
-        if (fromKP && toKP && fromKP.score > 0.3 && toKP.score > 0.3) {
-          canvasCtx.beginPath();
-          canvasCtx.moveTo(fromKP.x, fromKP.y);
-          canvasCtx.lineTo(toKP.x, toKP.y);
-          canvasCtx.stroke();
-        }
-      });
-      document.getElementById('poseDisplay').textContent = currentPose;
-    }
 
-    function buildControls() {
-      const controlsContainer = document.getElementById('controlInputs');
-      for (const [key, value] of Object.entries(CONFIG)) {
-        const controlDiv = document.createElement('div');
-        controlDiv.className = 'control-item';
-        const label = document.createElement('label');
-        label.textContent = formatLabel(key);
-        label.htmlFor = `input-${key}`;
-        const input = document.createElement('input');
-        input.type = 'number';
-        input.id = `input-${key}`;
-        input.value = value;
-        input.step = key.includes('Factor') || key.includes('ThresholdY') ? '0.05' : '1';
-        
-        input.addEventListener('change', () => {
-          CONFIG[key] = parseFloat(input.value);
-          logToPanel(`Updated ${formatLabel(key)} to ${input.value}`, 'info');
-        });
-        
-        controlDiv.appendChild(label);
-        controlDiv.appendChild(input);
-        controlsContainer.appendChild(controlDiv);
-      }
-      
-      document.getElementById('resetBtn').addEventListener('click', () => {
-        Object.keys(CONFIG).forEach(key => {
-          CONFIG[key] = DEFAULT_CONFIG[key];
-          document.getElementById(`input-${key}`).value = DEFAULT_CONFIG[key];
-        });
-        logToPanel('All settings reset to defaults', 'info');
-      });
-    }
-    
-    function formatLabel(key) {
-      return key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
-    }
-
-    window.addEventListener('load', () => {
-      consoleAreaElement = document.getElementById('consoleArea'); // Initialize console DOM element
-      logToPanel("Application loading...", "info");
-      init();
-      buildControls();
-      logToPanel("Application initialized. UI console is active.", "info");
+      CONFIG[selectedVar] = newValue;
+      // varInput.value = CONFIG[selectedVar]; // Reflect the potentially parsed/corrected value
+      statusP.textContent = `${selectedVar} updated to ${CONFIG[selectedVar]}.`;
+      statusP.style.color = '#7f7'; // Light green for dark background
+      console.log('CONFIG updated:', JSON.parse(JSON.stringify(CONFIG)));
     });
+  }
+
+  async function main() {
+    await tf.setBackend('webgl');
+    await tf.ready();
+    console.log('TF backend:', tf.getBackend());
+
+    const video = document.getElementById('video'),
+          canvas = document.getElementById('overlay'),
+          ctx = canvas.getContext('2d'),
+          poseText = document.getElementById('poseText');
+
+    setupConfigControls(); // Initialize the UI controls
+
+    const stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r); // Wait for metadata
+    video.play();
+
+    // Match canvas size to video element size (which might be different from video stream size if object-fit is used)
+    canvas.width = video.clientWidth;
+    canvas.height = video.clientHeight;
+    // If you want canvas resolution to match video intrinsic resolution:
+    // canvas.width = video.videoWidth;
+    // canvas.height = video.videoHeight;
+
+
+    const detector = await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      {modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING}
+    );
+
+    poseText.innerText = 'Ready!';
+
+    async function frameLoop() {
+      // Ensure canvas size is updated if video element resizes (e.g. responsive design)
+      if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+          canvas.width = video.clientWidth;
+          canvas.height = video.clientHeight;
+      }
+
+      // Pass the video element. flipHorizontal is false by default for movenet.
+      // The mirroring is handled by CSS transform on the video and canvas elements.
+      const poses = await detector.estimatePoses(video);
+      const estimatedState = interpretPose(poses[0]?.keypoints || []);
+
+      if (estimatedState !== POSE_STATES.POSE_TEMPORARILY_INCOMPLETE) {
+        poseText.innerText = estimatedState;
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (poses[0]?.keypoints) {
+          drawKeypoints(ctx);
+      }
+      requestAnimationFrame(frameLoop);
+    }
+
+    frameLoop();
+  }
+
+  main().catch(e => {
+    console.error(e);
+    document.getElementById('poseText').innerText = 'Error: ' + e.message;
+  });
   </script>
 </body>
 </html>
