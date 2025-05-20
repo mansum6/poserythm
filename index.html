@@ -1,0 +1,900 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Pose Detector</title>
+<script type="importmap">
+{
+"imports": {
+"@tensorflow/tfjs": "https://esm.sh/@tensorflow/tfjs@4.20.0",
+"@tensorflow-models/pose-detection": "https://cdn.skypack.dev/@tensorflow-models/pose-detection@2.1.3"
+}
+}
+</script>
+<style>
+body, html {
+    margin:0;
+    padding:0;
+    background:#222;
+    color:#fff;
+    font-family:sans-serif;
+    height: 100vh; /* Full viewport height */
+    overflow: hidden; /* Prevent body scrollbars */
+}
+
+#app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+}
+
+/* 1. Pose Info Area (Top 20%) */
+#pose-info-area {
+    flex: 0 0 20%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    background-color: #2a2a2a;
+    padding: 5px;
+    box-sizing: border-box;
+}
+#poseText {
+    font-size: clamp(1.5rem, 8vh, 4.5rem); /* Responsive font size */
+    text-align:center;
+    color: #eee;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 2. Video Area (Middle 40%) */
+#video-area {
+    flex: 0 0 40%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #1c1c1c;
+    overflow: hidden; /* Important for scaling content */
+    padding: 5px; /* Optional padding around video container */
+    box-sizing: border-box;
+}
+#container {
+    position:relative;
+    /* width: 640px; height: 480px; */ /* Old fixed size */
+    /* New responsive size maintaining 4:3 aspect ratio */
+    aspect-ratio: 640 / 480;
+    height: 100%; /* Fill the height of video-area */
+    max-width: 100%; /* Don't exceed width of video-area */
+    margin:0 auto; /* Center if aspect ratio makes it narrower than area */
+    border: 1px solid #444;
+    background: #000; /* Background for letter/pillar boxing */
+}
+#video {
+    display: block; /* Remove extra space below video */
+    width:100%;
+    height:100%;
+    transform: scaleX(-1);
+    object-fit: contain; /* Show whole frame, scaled down, letter/pillar boxed */
+}
+#overlay {
+    position:absolute;
+    top:0;
+    left:0;
+    width:100%;
+    height:100%;
+    pointer-events:none;
+    transform: scaleX(-1); /* Mirrors the canvas drawing space */
+}
+
+/* 3. Config Area (Below Middle 35%) */
+#config-area {
+    flex: 0 0 35%;
+    background-color: #252525;
+    overflow-y: auto; /* Scroll if content exceeds height */
+    padding: 10px;
+    box-sizing: border-box;
+}
+#controlsContainer {
+    padding: 10px;
+    margin: 0 auto;
+    border: 1px solid #555;
+    border-radius: 8px;
+    background-color: #333;
+    color: #fff;
+    max-width: 700px; /* Max width for readability */
+}
+#controlsContainer h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    text-align: center;
+    color: #0af;
+}
+#config-vars-list div { /* Each config row */
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap; /* Wrap on small screens if needed */
+    padding: 5px;
+    border-bottom: 1px solid #404040;
+}
+#config-vars-list div:last-child {
+    border-bottom: none;
+}
+#controlsContainer label {
+    margin-right: 10px;
+    min-width: 230px; /* Align inputs */
+    font-size: 0.9em;
+    color: #ccc;
+}
+#controlsContainer input[type="number"] {
+    padding: 6px 8px;
+    border: 1px solid #555;
+    background-color: #444;
+    color: #fff;
+    border-radius: 4px;
+    width: 100px;
+    max-width:120px;
+    margin-right: 10px;
+}
+#controlsContainer button {
+    padding: 6px 12px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    margin-left: auto; /* Pushes button to the right if space allows */
+}
+#controlsContainer button:hover { background-color: #0056b3; }
+#configStatus {
+    font-size: 0.9em;
+    min-height: 1.2em;
+    margin-top: 15px;
+    text-align: center;
+    color: #7f7;
+}
+
+/* 4. Console Output Area (Bottom 5%) */
+#console-output-area {
+    flex: 0 0 5%;
+    background-color: #111;
+    color: #ccc;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 0.8em;
+    overflow-y: auto;
+    border-top: 1px solid #444;
+    box-sizing: border-box;
+}
+#console-output-area p {
+    margin: 2px 0;
+    padding: 0;
+    white-space: pre-wrap; /* Allow wrapping but preserve spaces */
+}
+#console-output-area p.error { color: #ff6b6b; }
+#console-output-area p.warn { color: #ffa500; }
+#console-output-area p.log { color: #ccc; }
+
+/* 5. Debug Visualization */
+#debug-container {
+    margin-top: 10px;
+    padding: 5px;
+    border: 1px solid #555;
+    border-radius: 5px;
+    background-color: #2a2a2a;
+    font-family: monospace;
+    font-size: 0.85em;
+    color: #ddd;
+    max-height: 80px;
+    overflow-y: auto;
+}
+#debug-values {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 5px;
+}
+.debug-value {
+    display: flex;
+    justify-content: space-between;
+}
+.debug-label {
+    color: #0af;
+}
+
+</style>
+</head>
+<body>
+
+<div id="app-container">
+    <div id="pose-info-area">
+        <div id="poseText">Loading…</div>
+    </div>
+
+    <div id="video-area">
+        <div id="container">
+            <video id="video" autoplay playsinline muted></video> <!-- Added muted for autoplay policies -->
+            <canvas id="overlay"></canvas>
+        </div>
+    </div>
+
+    <div id="config-area">
+        <div id="controlsContainer">
+          <h3>Adjust Configuration</h3>
+          <div id="config-vars-list">
+            <!-- Config variables will be dynamically inserted here by JS -->
+          </div>
+          <p id="configStatus"></p>
+          <div id="debug-container">
+            <h4 style="margin: 0 0 5px 0;">Debug Values</h4>
+            <div id="debug-values"></div>
+          </div>
+        </div>
+    </div>
+
+    <div id="console-output-area">
+        <!-- Console messages will be displayed here -->
+    </div>
+</div>
+
+<script type="module">
+  import * as tf from '@tensorflow/tfjs';
+  import * as poseDetection from '@tensorflow-models/pose-detection';
+
+  const consoleOutputDiv = document.getElementById('console-output-area');
+  const debugValuesDiv = document.getElementById('debug-values');
+
+  // --- Optimization 2: Cache for updateDebugValue ---
+  const debugValueSpansCache = {};
+
+  function updateDebugValue(label, value) {
+    const id = `debug-${label.replace(/\s+/g, '-').toLowerCase()}`;
+    let valueSpan = debugValueSpansCache[id];
+
+    if (!valueSpan) {
+      let elem = document.getElementById(id);
+      if (!elem) {
+        elem = document.createElement('div');
+        elem.id = id;
+        elem.className = 'debug-value';
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'debug-label';
+        labelSpan.textContent = label + ':';
+
+        const newValueSpan = document.createElement('span'); // Renamed to avoid conflict
+        newValueSpan.className = 'debug-value-content';
+
+        elem.appendChild(labelSpan);
+        elem.appendChild(newValueSpan);
+
+        debugValuesDiv.appendChild(elem);
+        valueSpan = newValueSpan; // Assign the actual span element
+      } else {
+        valueSpan = elem.querySelector('.debug-value-content');
+      }
+      debugValueSpansCache[id] = valueSpan;
+    }
+
+    valueSpan.textContent = typeof value === 'number' ?
+      value.toFixed(4) : String(value);
+  }
+
+  // --- Optimization 1: Optimized logToScreen ---
+  let logElementsQueue = [];
+
+  function logToScreen(message, type = 'log') {
+    if (!consoleOutputDiv) return;
+
+    let pElement;
+    if (logElementsQueue.length < CONFIG.maxLogMessages) {
+      pElement = document.createElement('p');
+      logElementsQueue.push(pElement);
+      consoleOutputDiv.appendChild(pElement);
+    } else {
+      pElement = logElementsQueue.shift(); // Get the oldest element (from the DOM and our queue)
+      consoleOutputDiv.appendChild(pElement); // Move it to the end of children in the DOM
+      logElementsQueue.push(pElement); // Add it back to the end of our logical queue
+    }
+
+    const GTMtimestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'});
+    pElement.textContent = `[${GTMtimestamp} ${type.toUpperCase()}]: ${message}`;
+    pElement.className = type;
+
+    // Auto-scroll to the bottom
+    consoleOutputDiv.scrollTop = consoleOutputDiv.scrollHeight;
+  }
+
+  // Intercept console messages
+  const originalConsoleLog = console.log;
+  const originalConsoleError = console.error;
+  const originalConsoleWarn = console.warn;
+
+  console.log = (...args) => {
+    originalConsoleLog.apply(console, args);
+    logToScreen(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' '), 'log');
+  };
+  console.error = (...args) => {
+    originalConsoleError.apply(console, args);
+    logToScreen(args.map(arg => String(arg)).join(' '), 'error');
+  };
+  console.warn = (...args) => {
+    originalConsoleWarn.apply(console, args);
+    logToScreen(args.map(arg => String(arg)).join(' '), 'warn');
+  };
+
+
+  // CONFIG & STATE
+  const CONFIG = {
+    minPoseConfidence: 0.3,
+    poseSmoothFactor: 0.8,
+    minTorsoHeight: 30,
+    minShoulderWidth: 30,
+    torsoChangeThreshold: 0.2,
+    duckThresholdRatio: 0.35,
+    leanThresholdX: 0.15,
+    punchThresholdX: 0.3,
+    temporarilyIncompleteDurationMs: 500,
+    shoulderHipDistanceMultiplier: 0.5,
+    standingHeightWindowSize: 30,
+    minimumDuckDistance: 15,
+
+    // --- NEW "Magic" Variables ---
+    maxLogMessages: 50,                            // integer: Max messages in on-screen console
+    bodyScaleEMAlpha: 0.1,                         // float: Exponential Moving Average alpha for body scale smoothing
+    punchMinPixelSEDistance: 10,                   // integer: Min Shoulder-Elbow pixel distance for punch
+    punchYAlignmentFactor: 0.6,                    // float: Factor for Y alignment of wrist with shoulder for punch
+    minFramesForValidStandingHeight: 15,           // integer: Min frames in recentNoseYs to calculate standing height
+    drawKeypointRadius: 5,                         // integer: Radius of drawn keypoints
+    drawSkeletonLineWidth: 2,                      // integer: Line width for skeleton
+    drawKeypointFillColor: 'lime',                 // string: Color for keypoint fill
+    drawKeypointStrokeColor: 'yellow',             // string: Color for keypoint stroke/outline
+    drawSkeletonColor: 'aqua',                     // string: Color for skeleton lines
+    standingRefLineColor: 'cyan',                  // string: Color for standing height reference line
+    duckingRefLineColor: 'red',                    // string: Color for standing height ref line when ducking
+    poseIncompleteTimeout: 1500,                   // integer: (Example) Longer timeout before declaring POSE_INCOMPLETE
+    smoothingPasses: 1,                            // integer: (Example) Number of smoothing passes (advanced)
+    minKeypointsForValidPose: 7,                   // integer: (Example) Min essential keypoints to consider pose valid
+  };
+
+  const POSE_STATES = {
+    IDLE: 'IDLE',
+    PUNCH_LEFT: 'PUNCH_LEFT',
+    PUNCH_RIGHT: 'PUNCH_RIGHT',
+    LEAN_LEFT: 'LEAN_LEFT',
+    LEAN_RIGHT: 'LEAN_RIGHT',
+    DUCK: 'DUCK',
+    POSE_TEMPORARILY_INCOMPLETE: 'POSE_TEMPORARILY_INCOMPLETE',
+    POSE_INCOMPLETE: 'POSE_INCOMPLETE',
+    PUNCH_BOTH: 'PUNCH_BOTH',
+    POSE_LOST: 'POSE_LOST'
+  };
+
+  const essentialNames = [
+    "nose", "left_shoulder", "right_shoulder",
+    "left_hip", "right_hip", "left_wrist",
+    "right_wrist", "left_elbow", "right_elbow"
+  ];
+
+  // Updated for new integer config vars
+  const integerConfigVars = [
+      'minTorsoHeight', 'minShoulderWidth', 'temporarilyIncompleteDurationMs',
+      'standingHeightWindowSize', 'minimumDuckDistance',
+      'maxLogMessages', 'punchMinPixelSEDistance', 'minFramesForValidStandingHeight',
+      'drawKeypointRadius', 'drawSkeletonLineWidth',
+      'poseIncompleteTimeout', 'smoothingPasses', 'minKeypointsForValidPose' // Added new ones
+    ];
+
+
+  let gameState = {
+    smoothedKeypoints: {},
+    lastTorsoHeight: null,
+    standingNoseY: null,
+    recentNoseYs: [],
+    ducking: false,
+    temporarilyIncompleteEntryTime: 0,
+    calibrationComplete: false,
+    frameCounter: 0,
+    lastPoseState: null,
+    bodyScale: 1.0,
+    standingTorsoHeight: null,
+  };
+
+  function _smoothAndGetKeypoint(name, map) {
+    const kp = map[name];
+    if(!kp) return null;
+
+    let sk = gameState.smoothedKeypoints[name];
+    if(!sk) {
+      sk = {x: kp.x, y: kp.y, score: kp.score}; // This object creation is per keypoint, once.
+      gameState.smoothedKeypoints[name] = sk;
+      return sk;
+    }
+
+    // Apply smoothing passes (example of using a new config var)
+    for (let i = 0; i < CONFIG.smoothingPasses; i++) {
+        const f = CONFIG.poseSmoothFactor;
+        sk.x = f * sk.x + (1-f) * kp.x;
+        sk.y = f * sk.y + (1-f) * kp.y;
+    }
+    sk.score = kp.score; // Typically take the latest score or smooth it too
+    return sk;
+  }
+
+  function _checkPunch(w, e, s, isLeft, shoulderMidY, shoulderWidth) {
+    if(!w || !e || !s) return false;
+
+    const wristAhead = isLeft ? (w.x > e.x && e.x > s.x) : (w.x < e.x && e.x < s.x);
+    if(!wristAhead) return false;
+
+    const seDist = Math.abs(s.x - e.x),
+          ewDist = Math.abs(e.x - w.x),
+          // Using new CONFIG vars
+          alignedY = Math.abs(w.y - shoulderMidY) < shoulderWidth * CONFIG.punchYAlignmentFactor;
+
+    // Using new CONFIG var
+    return seDist > CONFIG.punchMinPixelSEDistance && ewDist > CONFIG.punchThresholdX * seDist && alignedY;
+  }
+
+  function _updateBodyScale(torsoHeight, shoulderWidth) {
+    const idealTorsoHeight = 150; // This could also be a CONFIG var
+    const scale = torsoHeight / idealTorsoHeight;
+    
+    // Using new CONFIG var for EMA alpha
+    gameState.bodyScale = gameState.bodyScale * (1 - CONFIG.bodyScaleEMAlpha) + scale * CONFIG.bodyScaleEMAlpha;
+    
+    updateDebugValue('Body Scale', gameState.bodyScale);
+    return gameState.bodyScale;
+  }
+
+  function _updateStandingHeight(nose, torsoHeight) {
+    if (!nose) return null;
+    
+    gameState.recentNoseYs.push(nose.y);
+    
+    if (gameState.recentNoseYs.length > CONFIG.standingHeightWindowSize) {
+      gameState.recentNoseYs.shift();
+    }
+    
+    // Using new CONFIG var
+    if (gameState.recentNoseYs.length < CONFIG.minFramesForValidStandingHeight) {
+      return null;
+    }
+    
+    const sortedYs = [...gameState.recentNoseYs].sort((a, b) => a - b); // slice().sort() is common
+    const medianY = sortedYs[Math.floor(sortedYs.length / 2)];
+    
+    if (!gameState.standingNoseY || 
+        Math.abs(medianY - gameState.standingNoseY) / torsoHeight > CONFIG.torsoChangeThreshold) {
+      gameState.standingNoseY = medianY;
+      gameState.standingTorsoHeight = torsoHeight;
+      gameState.ducking = false; // Reset ducking state when standing height reference changes significantly
+    }
+    
+    return gameState.standingNoseY;
+  }
+
+function interpretPose(rawKeypoints) { // Renamed to avoid confusion with global `keypoints` if any
+  gameState.frameCounter++;
+  
+  if (!rawKeypoints || rawKeypoints.length === 0) {
+    gameState.temporarilyIncompleteEntryTime = 0;
+    return POSE_STATES.POSE_LOST;
+  }
+
+  // --- Optimization 3: Optimized keypoint mapping ---
+  const kpMap = {};
+  let validKeypointsCount = 0;
+  for (const p of rawKeypoints) {
+      if (p && p.name && p.score >= CONFIG.minPoseConfidence) { // Added p null check
+          kpMap[p.name] = p;
+          if (essentialNames.includes(p.name)) { // Count only essential keypoints for this check
+            validKeypointsCount++;
+          }
+      }
+  }
+  // Example of using another new config var
+  // const essentialKeypointsPresent = essentialNames.every(n => kpMap[n]);
+  const essentialKeypointsPresent = essentialNames.every(n => kpMap[n]) && validKeypointsCount >= CONFIG.minKeypointsForValidPose;
+
+
+  if (!essentialKeypointsPresent) {
+    if (gameState.temporarilyIncompleteEntryTime === 0) {
+      gameState.temporarilyIncompleteEntryTime = performance.now();
+      return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
+    } else {
+      // Using new CONFIG var, e.g. poseIncompleteTimeout
+      if (performance.now() - gameState.temporarilyIncompleteEntryTime < CONFIG.poseIncompleteTimeout) { // Changed from temporarilyIncompleteDurationMs
+        return POSE_STATES.POSE_TEMPORARILY_INCOMPLETE;
+      } else {
+        return POSE_STATES.POSE_INCOMPLETE;
+      }
+    }
+  }
+
+  gameState.temporarilyIncompleteEntryTime = 0;
+
+  const es = {}; // Smoothed essential keypoints
+  for (let n of essentialNames) {
+      // Ensure kpMap[n] exists before smoothing, _smoothAndGetKeypoint handles internal null check for map[name]
+      // but it's good practice if we rely on all essentialNames being present from the check above.
+      if (kpMap[n]) {
+        es[n] = _smoothAndGetKeypoint(n, kpMap);
+      } else {
+        // This case should ideally not be hit if essentialKeypointsPresent is true
+        // and minKeypointsForValidPose ensures enough are there.
+        // If an essential keypoint is missing after the check, it's an issue.
+        // For robustness, we might return POSE_INCOMPLETE or handle missing 'es[n]' later.
+        // However, the `essentialNames.every(n => kpMap[n])` check should prevent this.
+      }
+  }
+
+
+  const {
+    nose, left_shoulder: ls, right_shoulder: rs,
+    left_hip: lh, right_hip: rh,
+    left_wrist: lw, right_wrist: rw,
+    left_elbow: le, right_elbow: re
+  } = es;
+
+  // Check if all smoothed essential keypoints are available
+  // This check is vital because _smoothAndGetKeypoint can return null
+  // if the raw keypoint wasn't in kpMap (though the earlier check should ensure essential ones are)
+  // or if kpMap[n] was undefined and passed to _smoothAndGetKeypoint.
+  // A more robust check after smoothing:
+  const allSmoothedPresent = essentialNames.every(name => es[name] && es[name].score >= CONFIG.minPoseConfidence);
+  if (!allSmoothedPresent) {
+      return POSE_STATES.POSE_INCOMPLETE; // Or a specific state like POSE_QUALITY_LOW
+  }
+
+
+  const shoulderMidY = (ls.y + rs.y) / 2,
+        shoulderMidX = (ls.x + rs.x) / 2,
+        hipMidY = (lh.y + rh.y) / 2,
+        hipMidX = (lh.x + rh.x) / 2,
+        torsoHeight = Math.abs(shoulderMidY - hipMidY),
+        shoulderWidth = Math.abs(ls.x - rs.x);
+
+  if (torsoHeight < CONFIG.minTorsoHeight || shoulderWidth < CONFIG.minShoulderWidth) {
+    return POSE_STATES.POSE_LOST; // Or POSE_TOO_SMALL / POSE_INVALID_DIMENSIONS
+  }
+
+  const bodyScale = _updateBodyScale(torsoHeight, shoulderWidth);
+  const standingNoseY = _updateStandingHeight(nose, torsoHeight);
+  
+  gameState.lastTorsoHeight = torsoHeight;
+
+  updateDebugValue('Torso Height', torsoHeight);
+  updateDebugValue('Shoulder Width', shoulderWidth);
+  updateDebugValue('Standing Nose Y', standingNoseY);
+  updateDebugValue('Current Nose Y', nose.y);
+  
+  if (standingNoseY) {
+    const dropPixels = nose.y - standingNoseY;
+    const normalizedDrop = dropPixels / torsoHeight; // Use current torsoHeight for normalization
+    
+    // Dynamic threshold based on current body proportions scaled by a config ratio
+    const dynamicThreshold = CONFIG.duckThresholdRatio; // Simplified, assuming duckThresholdRatio is already well-tuned
+                                                       // Or keep the original dynamic calculation if preferred:
+    // const shoulderHipDistance = Math.sqrt(Math.pow(shoulderMidX - hipMidX, 2) + Math.pow(shoulderMidY - hipMidY, 2));
+    // const dynamicThreshold = CONFIG.duckThresholdRatio * (shoulderHipDistance / Math.max(1, torsoHeight));
+
+
+    updateDebugValue('Drop Pixels', dropPixels);
+    updateDebugValue('Normalized Drop', normalizedDrop);
+    updateDebugValue('Duck Threshold (Norm)', dynamicThreshold);
+    
+    const minRequiredDrop = CONFIG.minimumDuckDistance * bodyScale;
+    
+    if (!gameState.ducking && dropPixels > minRequiredDrop && normalizedDrop > dynamicThreshold) {
+        gameState.ducking = true;
+    }
+    else if (gameState.ducking && (dropPixels < minRequiredDrop * 0.5 || normalizedDrop < dynamicThreshold * 0.5)) {
+        gameState.ducking = false;
+    }
+    updateDebugValue('Is Ducking', gameState.ducking);
+  }
+
+  if (gameState.ducking) {
+      return POSE_STATES.DUCK;
+  }
+
+  const leanOffset = shoulderMidX - hipMidX;
+  const leanThresh = CONFIG.leanThresholdX * shoulderWidth;
+
+  updateDebugValue('Lean Offset', leanOffset);
+  updateDebugValue('Lean Threshold', leanThresh);
+
+  if (leanOffset > leanThresh) return POSE_STATES.LEAN_LEFT;
+  if (leanOffset < -leanThresh) return POSE_STATES.LEAN_RIGHT;
+
+  const leftPunch = _checkPunch(lw, le, ls, true, shoulderMidY, shoulderWidth);
+  const rightPunch = _checkPunch(rw, re, rs, false, shoulderMidY, shoulderWidth);
+
+  updateDebugValue('Left Punch Detected', leftPunch);
+  updateDebugValue('Right Punch Detected', rightPunch);
+
+  if (leftPunch && rightPunch) {
+    return POSE_STATES.PUNCH_BOTH;
+  }
+  if (leftPunch) return POSE_STATES.PUNCH_LEFT;
+  if (rightPunch) return POSE_STATES.PUNCH_RIGHT;
+
+  return POSE_STATES.IDLE;
+}
+
+  // --- Optimization 4: Optimized drawKeypoints ---
+  function drawKeypoints(ctx) {
+    // Draw keypoints (circles)
+    ctx.fillStyle = CONFIG.drawKeypointFillColor;
+    ctx.strokeStyle = CONFIG.drawKeypointStrokeColor;
+    // Consider a separate lineWidth for keypoint outlines if needed, e.g., CONFIG.drawKeypointOutlineWidth
+    ctx.lineWidth = 1; // Default thin outline for points
+    const radius = CONFIG.drawKeypointRadius;
+
+    for (let n of essentialNames) {
+      const kp = gameState.smoothedKeypoints[n];
+      if (!kp || kp.score < CONFIG.minPoseConfidence) continue;
+
+      ctx.beginPath();
+      ctx.arc(kp.x, kp.y, radius, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+    }
+    
+    // Draw standing height reference line
+    if (gameState.standingNoseY) {
+      ctx.beginPath();
+      ctx.strokeStyle = gameState.ducking ? CONFIG.duckingRefLineColor : CONFIG.standingRefLineColor;
+      ctx.lineWidth = 1; // Typically a thin line
+      ctx.setLineDash([5, 5]);
+      ctx.moveTo(0, gameState.standingNoseY); // Assumes 0 is left edge of scaled video content
+      // ctx.lineTo(ctx.canvas.width, gameState.standingNoseY); // This would draw across the whole canvas
+      // Correct would be to draw across the video's width in its coordinate system
+      // Assuming video.videoWidth is the original width before scaling
+      // This needs to be passed or accessible, or use a known large enough value if ctx is scaled to video coords.
+      // If ctx is already scaled to video dimensions, then video.videoWidth is the correct extent.
+      // The main `frameLoop` scales ctx to video dimensions, so this should be fine.
+      // Let's use a placeholder for video width if not directly available here, or assume it's implicitly handled by scaling.
+      // For simplicity, if video is always wider than tall, this works:
+      ctx.lineTo(video.videoWidth, gameState.standingNoseY); // Use video.videoWidth for scaled context
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    
+    // Batch draw skeleton lines
+    ctx.beginPath(); // Start one path for all skeleton lines
+    ctx.strokeStyle = CONFIG.drawSkeletonColor;
+    ctx.lineWidth = CONFIG.drawSkeletonLineWidth;
+
+    const { nose, left_shoulder, right_shoulder, left_hip, right_hip, left_elbow, left_wrist, right_elbow, right_wrist } = gameState.smoothedKeypoints;
+    const skp = gameState.smoothedKeypoints; // Shorter alias
+
+    // Helper to check if all listed keypoints are valid for drawing a segment
+    const canDraw = (...kps) => kps.every(kpName => skp[kpName] && skp[kpName].score >= CONFIG.minPoseConfidence);
+
+    // Head to shoulders
+    if (canDraw("nose", "left_shoulder")) {
+      ctx.moveTo(skp.nose.x, skp.nose.y);
+      ctx.lineTo(skp.left_shoulder.x, skp.left_shoulder.y);
+    }
+    if (canDraw("nose", "right_shoulder")) {
+      ctx.moveTo(skp.nose.x, skp.nose.y);
+      ctx.lineTo(skp.right_shoulder.x, skp.right_shoulder.y);
+    }
+    
+    // Torso
+    if (canDraw("left_shoulder", "right_shoulder")) {
+      ctx.moveTo(skp.left_shoulder.x, skp.left_shoulder.y);
+      ctx.lineTo(skp.right_shoulder.x, skp.right_shoulder.y);
+    }
+    if (canDraw("left_shoulder", "left_hip")) {
+      ctx.moveTo(skp.left_shoulder.x, skp.left_shoulder.y);
+      ctx.lineTo(skp.left_hip.x, skp.left_hip.y);
+    }
+    if (canDraw("right_shoulder", "right_hip")) {
+      ctx.moveTo(skp.right_shoulder.x, skp.right_shoulder.y);
+      ctx.lineTo(skp.right_hip.x, skp.right_hip.y);
+    }
+    if (canDraw("left_hip", "right_hip")) {
+      ctx.moveTo(skp.left_hip.x, skp.left_hip.y);
+      ctx.lineTo(skp.right_hip.x, skp.right_hip.y);
+    }
+    
+    // Arms
+    if (canDraw("left_shoulder", "left_elbow", "left_wrist")) {
+      ctx.moveTo(skp.left_shoulder.x, skp.left_shoulder.y);
+      ctx.lineTo(skp.left_elbow.x, skp.left_elbow.y);
+      ctx.lineTo(skp.left_wrist.x, skp.left_wrist.y);
+    }
+    if (canDraw("right_shoulder", "right_elbow", "right_wrist")) {
+      ctx.moveTo(skp.right_shoulder.x, skp.right_shoulder.y);
+      ctx.lineTo(skp.right_elbow.x, skp.right_elbow.y);
+      ctx.lineTo(skp.right_wrist.x, skp.right_wrist.y);
+    }
+    
+    ctx.stroke(); // Single stroke call for all skeleton lines
+  }
+
+  function setupConfigControls() {
+    const configVarsListDiv = document.getElementById('config-vars-list');
+    const statusP = document.getElementById('configStatus');
+    configVarsListDiv.innerHTML = ''; 
+
+    Object.entries(CONFIG).forEach(([varName, currentValue]) => {
+        // Skip string-based config vars for now as input type="number" is used
+        if (typeof currentValue === 'string' && !['drawKeypointFillColor', /* add other string types if UI needed */].includes(varName)) {
+            // For simplicity, we are skipping UI controls for string colors here.
+            // They are configurable in code. To make them UI-configurable,
+            // you'd need input type="text" or input type="color".
+            if (!varName.toLowerCase().includes('color')) return; // only skip non-color strings
+        }
+
+
+        const varRowDiv = document.createElement('div');
+        varRowDiv.className = 'config-row';
+
+        const label = document.createElement('label');
+        label.htmlFor = `config_input_${varName}`;
+        label.textContent = `${varName}:`;
+        varRowDiv.appendChild(label);
+
+        const input = document.createElement('input');
+        if (typeof currentValue === 'string' && varName.toLowerCase().includes('color')) {
+            input.type = 'text'; // Simple text input for colors for now
+        } else {
+            input.type = 'number';
+        }
+        input.id = `config_input_${varName}`;
+        input.value = currentValue;
+
+        if (input.type === 'number') {
+            if (integerConfigVars.includes(varName)) {
+                input.step = "1";
+            } else { // Float types
+                // More granular step for specific float variables
+                if (['minPoseConfidence', 'poseSmoothFactor', 'torsoChangeThreshold', 
+                     'shoulderHipDistanceMultiplier', 'bodyScaleEMAlpha', 'punchYAlignmentFactor',
+                     'duckThresholdRatio', 'leanThresholdX', 'punchThresholdX' // Added existing sensitive floats
+                    ].includes(varName)) {
+                    input.step = "0.01";
+                } else {
+                    input.step = "0.1"; // Default for other floats
+                }
+            }
+        }
+        varRowDiv.appendChild(input);
+
+        const applyBtn = document.createElement('button');
+        applyBtn.textContent = 'Update';
+        applyBtn.dataset.varname = varName; // Not strictly needed if using varName from closure
+        varRowDiv.appendChild(applyBtn);
+
+        applyBtn.addEventListener('click', () => {
+            const newValueStr = input.value;
+            let newValue;
+
+            if (typeof CONFIG[varName] === 'string' && varName.toLowerCase().includes('color')) {
+                newValue = newValueStr; // Keep as string for color
+            } else if (integerConfigVars.includes(varName)) {
+                newValue = parseInt(newValueStr, 10);
+            } else {
+                newValue = parseFloat(newValueStr);
+            }
+
+            if (input.type === 'number' && isNaN(newValue)) {
+                statusP.textContent = `Error: Invalid number for ${varName}.`;
+                statusP.style.color = '#ff6b6b';
+                input.value = CONFIG[varName]; 
+                return;
+            }
+
+            CONFIG[varName] = newValue;
+            // input.value = newValue; // Reflect parsed value, useful if parseFloat/Int changes it.
+            statusP.textContent = `${varName} updated to ${CONFIG[varName]}.`;
+            statusP.style.color = '#7f7';
+            console.log('CONFIG updated:', JSON.parse(JSON.stringify(CONFIG))); // Deep copy for logging
+        });
+        configVarsListDiv.appendChild(varRowDiv);
+    });
+    statusP.textContent = 'Config loaded. Adjust values and click "Update".';
+    statusP.style.color = '#aaa';
+  }
+
+  // Video element needs to be accessible in drawKeypoints if using video.videoWidth
+  let video; 
+
+  async function main() {
+    await tf.setBackend('webgl');
+    await tf.ready();
+    console.log('TF backend:', tf.getBackend());
+
+    // Assign to global `video` so other functions can access its properties like videoWidth
+    video = document.getElementById('video'); 
+    const canvas = document.getElementById('overlay'),
+          ctx = canvas.getContext('2d'),
+          poseTextEl = document.getElementById('poseText');
+
+    setupConfigControls();
+
+    const stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
+    video.srcObject = stream;
+    await new Promise(r => video.onloadedmetadata = r);
+    video.play().catch(e => {
+        console.error("Video play failed:", e);
+        logToScreen("Video play failed. User interaction might be needed.", "error");
+    });
+
+
+    const detector = await poseDetection.createDetector(
+      poseDetection.SupportedModels.MoveNet,
+      {modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING}
+    );
+
+    poseTextEl.innerText = 'Ready!';
+
+    async function frameLoop() {
+      if (video.readyState < video.HAVE_METADATA || video.paused || video.ended) {
+          requestAnimationFrame(frameLoop);
+          return;
+      }
+
+      if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+          canvas.width = video.clientWidth;
+          canvas.height = video.clientHeight;
+      }
+
+      const poses = await detector.estimatePoses(video, {flipHorizontal: false});
+      // Pass poses[0]?.keypoints directly, or an empty array if undefined
+      const estimatedState = interpretPose(poses[0]?.keypoints || []);
+
+
+      if (estimatedState !== POSE_STATES.POSE_TEMPORARILY_INCOMPLETE) {
+        // Update poseTextEl only if state changes to reduce DOM updates
+        if (poseTextEl.innerText !== estimatedState) {
+            poseTextEl.innerText = estimatedState;
+        }
+      }
+
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (poses[0]?.keypoints && video.videoWidth > 0 && video.videoHeight > 0) {
+          ctx.save();
+
+          const videoAspectRatio = video.videoWidth / video.videoHeight;
+          const canvasAspectRatio = canvas.width / canvas.height;
+          let renderWidth, renderHeight, offsetX = 0, offsetY = 0;
+
+          if (videoAspectRatio > canvasAspectRatio) {
+              renderWidth = canvas.width;
+              renderHeight = renderWidth / videoAspectRatio;
+              offsetY = (canvas.height - renderHeight) / 2;
+          } else {
+              renderHeight = canvas.height;
+              renderWidth = renderHeight * videoAspectRatio;
+              offsetX = (canvas.width - renderWidth) / 2;
+          }
+
+          ctx.translate(offsetX, offsetY);
+          ctx.scale(renderWidth / video.videoWidth, renderHeight / video.videoHeight);
+
+          drawKeypoints(ctx);
+          ctx.restore();
+      }
+      requestAnimationFrame(frameLoop);
+    }
+
+    frameLoop();
+  }
+
+  main().catch(e => {
+    console.error(e);
+    const poseTextEl = document.getElementById('poseText');
+    if(poseTextEl) poseTextEl.innerText = 'Critical Error!';
+  });
+  </script>
+</body>
+</html>
