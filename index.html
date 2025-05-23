@@ -1,20 +1,74 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Pose Detection Optimized</title>
+  <meta charset="utf-8" />
+  <title>PoseNet Real-time Detection with Colored Poses</title>
   <style>
-    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background-color: #333; color: #eee;}
-    #video-container { position: relative; width: 640px; height: 480px; border: 1px solid #555;}
-    video { display: block; width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
-    #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%;}
-    #poseText { font-size: 2em; color: #ffae00; margin-top: 10px; min-height: 1.2em;}
-    #controls-area { display: flex; margin-top: 20px; width: 90%; max-width: 1000px; justify-content: space-around;}
-    .panel { background-color: #444; padding: 15px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.5); margin:10px; }
-    .panel h3 { margin-top: 0; border-bottom: 1px solid #555; padding-bottom: 5px; color: #00bcd4;}
-    #console-output-area { width: 100%; max-height: 150px; overflow-y: auto; border: 1px solid #555; background-color: #2a2a2a; padding: 5px; box-sizing: border-box; font-size: 0.8em; margin-top:10px;}
-    #console-output-area p { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
-    #console-output-area p.log { color: #ccc; }
-    #console-output-area p.warn { color: #ffcc00; }
+    body {
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background-color: #333;
+      color: #eee;
+    }
+    #video-container {
+      position: relative;
+      width: 640px;
+      height: 480px;
+      border: 1px solid #555;
+    }
+    video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      transform: scaleX(-1); /* mirror */
+    }
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #poseText {
+      font-size: 2em;
+      color: #ffae00;
+      margin-top: 10px;
+      min-height: 1.2em;
+    }
+    .panel {
+      background-color: #444;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+      margin: 10px;
+    }
+    .panel h3 {
+      margin-top: 0;
+      border-bottom: 1px solid #555;
+      padding-bottom: 5px;
+      color: #00bcd4;
+    }
+    #console-output-area {
+      width: 100%;
+      max-height: 150px;
+      overflow-y: auto;
+      border: 1px solid #555;
+      background-color: #2a2a2a;
+      padding: 5px;
+      box-sizing: border-box;
+      font-size: 0.8em;
+      margin-top: 10px;
+    }
+    #console-output-area p {
+      margin: 2px 0;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    #console-output-area p.log   { color: #ccc; }
+    #console-output-area p.warn  { color: #ffcc00; }
     #console-output-area p.error { color: #ff6b6b; }
   </style>
   <script type="importmap">
@@ -34,11 +88,14 @@
   </div>
   <div id="poseText">Loading...</div>
 
+  <div class="panel">
+    <h3>Console Output</h3>
+    <div id="console-output-area"></div>
+  </div>
+
   <script type="module">
     import * as tf from '@tensorflow/tfjs';
     import * as poseDetection from '@tensorflow-models/pose-detection';
-
-    // Simulated import for demonstration (replace with your actual module)
     import {
       interpretPose as interpretPoseFromModule,
       POSE_STATES,
@@ -48,86 +105,111 @@
       resetPoseDetectionState
     } from './poseDetection2.js';
 
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('overlay');
-    const ctx = canvas.getContext('2d');
+    // simple on-screen logging
+    const consoleOutputDiv = document.getElementById('console-output-area');
+    function logToScreen(msg, type='log') {
+      const p = document.createElement('p');
+      p.textContent = msg;
+      p.className = type;
+      consoleOutputDiv.appendChild(p);
+      consoleOutputDiv.scrollTop = consoleOutputDiv.scrollHeight;
+    }
+    console.log = (...a) => { logToScreen(a.join(' '), 'log'); };
+    console.warn = (...a)=>{ logToScreen(a.join(' '), 'warn'); };
+    console.error = (...a)=>{ logToScreen(a.join(' '), 'error'); };
 
-    const poseTextEl = document.getElementById('poseText');
-
-    // 🎨 Pose Color Map
-    const poseColors = {
-      PUNCH_RIGHT: '#00ff00', // Green
-      PUNCH_LEFT: '#ff0000',  // Red
-      PUNCH_BOTH: '#0000ff',  // Blue
-      DEFAULT: '#ffae00'      // Default orange
+    // App‐wide settings
+    const APP_CONFIG = {
+      drawKeypointRadius: 5,
+      drawKeypointFillColor: 'lime',
+      drawKeypointStrokeColor: 'yellow',
+      drawSkeletonColor: 'aqua'
     };
 
-    // 🔁 Update pose text and color
-    function updatePoseText(pose) {
-      poseTextEl.textContent = pose;
-      poseTextEl.style.color = poseColors[pose] || poseColors.DEFAULT;
-    }
+    // assign unique colors
+    const poseColors = {
+      [POSE_STATES.PUNCH_LEFT]:  'red',
+      [POSE_STATES.PUNCH_RIGHT]: 'blue',
+      [POSE_STATES.PUNCH_BOTH]: 'magenta'
+    };
 
-    async function setupCamera() {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: 'user', width: 640, height: 480 }
-      });
-      video.srcObject = stream;
-      return new Promise((resolve) => {
-        video.onloadedmetadata = () => {
-          resolve(video);
-        };
-      });
-    }
-
-    async function init() {
-      await setupCamera();
-      video.play();
-
-      const detector = await poseDetection.createDetector(
-        poseDetection.SupportedModels.MoveNet,
-        {
-          modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING
-        }
-      );
-
-      const detectPose = async () => {
-        const poses = await detector.estimatePoses(video);
-        if (poses.length > 0) {
-          const pose = interpretPoseFromModule(poses[0]);
-          updatePoseText(pose);
-        }
-
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        drawKeypoints(ctx, video.videoWidth);
-
-        requestAnimationFrame(detectPose);
-      };
-
-      detectPose();
-    }
-
-    function drawKeypoints(ctx, videoWidthForRefLine) {
-      const smoothedKeypoints = getSmoothedKeypoints();
-      const poseModuleState = getPoseDetectionInternalState();
-
-      ctx.fillStyle = 'lime';
-      ctx.strokeStyle = 'yellow';
-      ctx.lineWidth = 1;
-      const radius = 5;
-
-      for (const name in smoothedKeypoints) {
-        const kp = smoothedKeypoints[name];
+    // utility: draw keypoints + skeleton with pose‐dependent color
+    function drawKeypoints(ctx, videoWidth, currentPose) {
+      const sk = getSmoothedKeypoints();
+      // draw keypoints
+      ctx.fillStyle   = APP_CONFIG.drawKeypointFillColor;
+      ctx.strokeStyle = APP_CONFIG.drawKeypointStrokeColor;
+      ctx.lineWidth   = 1;
+      for (const name in sk) {
+        const kp = sk[name];
         if (!kp || kp.score < POSE_DETECTION_CONFIG.minPoseConfidence) continue;
         ctx.beginPath();
-        ctx.arc(kp.x, kp.y, radius, 0, 2 * Math.PI);
-        ctx.fill();
-        ctx.stroke();
+        ctx.arc(kp.x, kp.y, APP_CONFIG.drawKeypointRadius, 0, 2*Math.PI);
+        ctx.fill(); ctx.stroke();
       }
+      // draw skeleton
+      // choose color by pose
+      ctx.strokeStyle = poseColors[currentPose] || APP_CONFIG.drawSkeletonColor;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const canDraw = (...pts) => pts.every(n => sk[n] && sk[n].score >= POSE_DETECTION_CONFIG.minPoseConfidence);
+      if (canDraw('nose','left_shoulder')) { ctx.moveTo(sk.nose.x, sk.nose.y); ctx.lineTo(sk.left_shoulder.x, sk.left_shoulder.y); }
+      if (canDraw('nose','right_shoulder')){ ctx.moveTo(sk.nose.x, sk.nose.y); ctx.lineTo(sk.right_shoulder.x, sk.right_shoulder.y); }
+      if (canDraw('left_shoulder','left_elbow','left_wrist')){
+        ctx.moveTo(sk.left_shoulder.x, sk.left_shoulder.y);
+        ctx.lineTo(sk.left_elbow.x, sk.left_elbow.y);
+        ctx.lineTo(sk.left_wrist.x, sk.left_wrist.y);
+      }
+      if (canDraw('right_shoulder','right_elbow','right_wrist')){
+        ctx.moveTo(sk.right_shoulder.x, sk.right_shoulder.y);
+        ctx.lineTo(sk.right_elbow.x, sk.right_elbow.y);
+        ctx.lineTo(sk.right_wrist.x, sk.right_wrist.y);
+      }
+      // ... add other bones as needed ...
+      ctx.stroke();
     }
 
-    init();
+    // main
+    (async () => {
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('overlay');
+      const poseText = document.getElementById('poseText');
+      const ctx = canvas.getContext('2d');
+
+      // request camera
+      const stream = await navigator.mediaDevices.getUserMedia({video:true});
+      video.srcObject = stream;
+      await video.play();
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      // load detector
+      const detector = await poseDetection.createDetector(
+        poseDetection.SupportedModels.PoseNet,
+        { architecture: 'MobileNetV1', outputStride: 16, multiplier: .75 }
+      );
+      console.log('Model loaded');
+
+      let lastPose = null;
+
+      // loop
+      async function renderLoop() {
+        const poses = await detector.estimatePoses(video);
+        if (poses.length) {
+          // convert and interpret
+          const simpleKP = poses[0].keypoints.map(kp=>({
+            name: kp.name, x: kp.x, y: kp.y, score: kp.score
+          }));
+          const poseState = interpretPoseFromModule(simpleKP);
+          lastPose = poseState;
+          poseText.textContent = poseState;
+        }
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        drawKeypoints(ctx, video.videoWidth, lastPose);
+        requestAnimationFrame(renderLoop);
+      }
+      renderLoop();
+    })();
   </script>
 </body>
 </html>
