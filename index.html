@@ -1,84 +1,39 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <title>PoseNet Real-time Detection with Colored Poses</title>
+  <title>Pose Detection Optimized</title>
   <style>
-    body {
-      font-family: sans-serif;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      background-color: #333;
-      color: #eee;
-    }
-    #video-container {
-      position: relative;
-      width: 640px;
-      height: 480px;
-      border: 1px solid #555;
-    }
-    video {
-      display: block;
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      transform: scaleX(-1); /* mirror */
-    }
-    #overlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-    }
-    #poseText {
-      font-size: 2em;
-      color: #ffae00;
-      margin-top: 10px;
-      min-height: 1.2em;
-    }
-    .panel {
-      background-color: #444;
-      padding: 15px;
-      border-radius: 8px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.5);
-      margin: 10px;
-    }
-    .panel h3 {
-      margin-top: 0;
-      border-bottom: 1px solid #555;
-      padding-bottom: 5px;
-      color: #00bcd4;
-    }
-    #console-output-area {
-      width: 100%;
-      max-height: 150px;
-      overflow-y: auto;
-      border: 1px solid #555;
-      background-color: #2a2a2a;
-      padding: 5px;
-      box-sizing: border-box;
-      font-size: 0.8em;
-      margin-top: 10px;
-    }
-    #console-output-area p {
-      margin: 2px 0;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-    #console-output-area p.log   { color: #ccc; }
-    #console-output-area p.warn  { color: #ffcc00; }
+    body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; background-color: #333; color: #eee;}
+    #video-container { position: relative; width: 640px; height: 480px; border: 1px solid #555;}
+    video { display: block; width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); } /* Mirror video via CSS */
+    #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%;}
+    #poseText { font-size: 2em; color: #ffae00; margin-top: 10px; min-height: 1.2em;}
+    #controls-area { display: flex; margin-top: 20px; width: 90%; max-width: 1000px; justify-content: space-around;}
+    .panel { background-color: #444; padding: 15px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.5); margin:10px; }
+    .panel h3 { margin-top: 0; border-bottom: 1px solid #555; padding-bottom: 5px; color: #00bcd4;}
+    #console-output-area { width: 100%; max-height: 150px; overflow-y: auto; border: 1px solid #555; background-color: #2a2a2a; padding: 5px; box-sizing: border-box; font-size: 0.8em; margin-top:10px;}
+    #console-output-area p { margin: 2px 0; white-space: pre-wrap; word-break: break-all; }
+    #console-output-area p.log { color: #ccc; }
+    #console-output-area p.warn { color: #ffcc00; }
     #console-output-area p.error { color: #ff6b6b; }
+    #config-vars-list .config-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    #config-vars-list label { margin-right: 10px; flex-basis: 50%; }
+    #config-vars-list input { flex-grow: 1; margin-right: 10px; padding: 4px; background: #555; color: #eee; border: 1px solid #666; border-radius: 3px;}
+    #config-vars-list button { padding: 4px 8px; background: #007bff; color: white; border:none; border-radius: 3px; cursor: pointer;}
+    #config-vars-list button:hover { background: #0056b3; }
+    #configStatus { font-size: 0.9em; margin-top: 10px; min-height: 1.1em; text-align: center;}
+    .debug-value { margin-bottom: 3px; font-size: 0.9em; }
+    .debug-label { font-weight: bold; color: #87ceeb; }
+    .debug-value-content { margin-left: 5px; color: #fafad2;}
   </style>
   <script type="importmap">
-  {
-    "imports": {
-      "@tensorflow/tfjs": "https://esm.sh/@tensorflow/tfjs@4.22.0",
-      "@tensorflow-models/pose-detection": "https://cdn.skypack.dev/@tensorflow-models/pose-detection@2.1.3"
-    }
-  }
-  </script>
+{
+"imports": {
+"@tensorflow/tfjs": "https://esm.sh/@tensorflow/tfjs@4.20.0",
+"@tensorflow-models/pose-detection": "https://cdn.skypack.dev/@tensorflow-models/pose-detection@2.1.3"
+}
+}
+</script>
 </head>
 <body>
   <h1>PoseNet Real-time Detection</h1>
@@ -88,128 +43,349 @@
   </div>
   <div id="poseText">Loading...</div>
 
-  <div class="panel">
-    <h3>Console Output</h3>
-    <div id="console-output-area"></div>
+  <div id="controls-area">
+    <div class="panel" id="config-panel">
+      <h3>App Configuration</h3>
+      <div id="config-vars-list"></div>
+      <p id="configStatus">Loading config...</p>
+      <button id="resetPoseStateButton" style="margin-top:10px; background-color: #dc3545;">Reset Pose State</button>
+    </div>
+    <div class="panel" id="debug-panel">
+      <h3>Debug Values</h3>
+      <div id="debug-values"></div>
+    </div>
+  </div>
+  <div class="panel" id="console-panel">
+      <h3>Console Output</h3>
+      <div id="console-output-area"></div>
   </div>
 
   <script type="module">
     import * as tf from '@tensorflow/tfjs';
     import * as poseDetection from '@tensorflow-models/pose-detection';
+    // Import from our new module
     import {
       interpretPose as interpretPoseFromModule,
-      POSE_STATES,
-      POSE_DETECTION_CONFIG,
+      POSE_STATES, // Renamed to avoid conflict if main has its own
+      POSE_DETECTION_CONFIG, // Import the config from the module
       getSmoothedKeypoints,
       getPoseDetectionInternalState,
       resetPoseDetectionState
-    } from './poseDetection.js';
+    } from './poseDetection.js'; // Adjust path if necessary
 
-    // simple on-screen logging
     const consoleOutputDiv = document.getElementById('console-output-area');
-    function logToScreen(msg, type='log') {
-      const p = document.createElement('p');
-      p.textContent = msg;
-      p.className = type;
-      consoleOutputDiv.appendChild(p);
-      consoleOutputDiv.scrollTop = consoleOutputDiv.scrollHeight;
-    }
-    console.log = (...a) => { logToScreen(a.join(' '), 'log'); };
-    console.warn = (...a)=>{ logToScreen(a.join(' '), 'warn'); };
-    console.error = (...a)=>{ logToScreen(a.join(' '), 'error'); };
+    const debugValuesDiv = document.getElementById('debug-values');
+    const debugValueSpansCache = {};
 
-    // App‐wide settings
-    const APP_CONFIG = {
+    function updateDebugValue(label, value) {
+      const id = `debug-${label.replace(/\s+/g, '-').toLowerCase()}`;
+      let valueSpan = debugValueSpansCache[id];
+
+      if (!valueSpan) {
+        let elem = document.getElementById(id);
+        if (!elem) {
+          elem = document.createElement('div');
+          elem.id = id;
+          elem.className = 'debug-value';
+          const labelSpan = document.createElement('span');
+          labelSpan.className = 'debug-label';
+          labelSpan.textContent = label + ':';
+          const newValueSpan = document.createElement('span');
+          newValueSpan.className = 'debug-value-content';
+          elem.appendChild(labelSpan);
+          elem.appendChild(newValueSpan);
+          debugValuesDiv.appendChild(elem);
+          valueSpan = newValueSpan;
+        } else {
+          valueSpan = elem.querySelector('.debug-value-content');
+        }
+        debugValueSpansCache[id] = valueSpan;
+      }
+      valueSpan.textContent = typeof value === 'number' ? value.toFixed(4) : String(value);
+    }
+
+    let logElementsQueue = [];
+    const APP_CONFIG = { // Application specific config
+      maxLogMessages: 50,
       drawKeypointRadius: 5,
+      drawSkeletonLineWidth: 2,
       drawKeypointFillColor: 'lime',
       drawKeypointStrokeColor: 'yellow',
-      drawSkeletonColor: 'aqua'
+      drawSkeletonColor: 'aqua',
+      standingRefLineColor: 'cyan',
+      duckingRefLineColor: 'red',
+      // You can add other app-specific settings here
+      // For pose detection specific settings, modify POSE_DETECTION_CONFIG directly
+      // or provide UI controls that update POSE_DETECTION_CONFIG's properties.
+    };
+    const appIntegerConfigVars = ['maxLogMessages', 'drawKeypointRadius', 'drawSkeletonLineWidth'];
+
+
+    function logToScreen(message, type = 'log') {
+      if (!consoleOutputDiv) return;
+      let pElement;
+      if (logElementsQueue.length < APP_CONFIG.maxLogMessages) {
+        pElement = document.createElement('p');
+        logElementsQueue.push(pElement);
+        consoleOutputDiv.appendChild(pElement);
+      } else {
+        pElement = logElementsQueue.shift();
+        consoleOutputDiv.appendChild(pElement);
+        logElementsQueue.push(pElement);
+      }
+      const GTMtimestamp = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'});
+      pElement.textContent = `[${GTMtimestamp} ${type.toUpperCase()}]: ${message}`;
+      pElement.className = type;
+      consoleOutputDiv.scrollTop = consoleOutputDiv.scrollHeight;
+    }
+
+    const originalConsoleLog = console.log;
+    const originalConsoleError = console.error;
+    const originalConsoleWarn = console.warn;
+    console.log = (...args) => {
+      originalConsoleLog.apply(console, args);
+      logToScreen(args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' '), 'log');
+    };
+    console.error = (...args) => {
+      originalConsoleError.apply(console, args);
+      logToScreen(args.map(arg => String(arg)).join(' '), 'error');
+    };
+    console.warn = (...args) => {
+      originalConsoleWarn.apply(console, args);
+      logToScreen(args.map(arg => String(arg)).join(' '), 'warn');
     };
 
-    // assign unique colors
-    const poseColors = {
-      [POSE_STATES.PUNCH_LEFT]:  'red',
-      [POSE_STATES.PUNCH_RIGHT]: 'blue',
-      [POSE_STATES.PUNCH_BOTH]: 'magenta'
+    let appState = { // Application-level state
+        frameCounter: 0,
+        // other app-specific state vars if needed
     };
 
-    // utility: draw keypoints + skeleton with pose‐dependent color
-    function drawKeypoints(ctx, videoWidth, currentPose) {
-      const sk = getSmoothedKeypoints();
-      // draw keypoints
-      ctx.fillStyle   = APP_CONFIG.drawKeypointFillColor;
+    function drawKeypoints(ctx, videoWidthForRefLine) { // videoWidthForRefLine is video.videoWidth
+      const smoothedKeypoints = getSmoothedKeypoints(); // Get from module
+      const poseModuleState = getPoseDetectionInternalState(); // Get relevant state like ducking, standingNoseY
+
+      ctx.fillStyle = APP_CONFIG.drawKeypointFillColor;
       ctx.strokeStyle = APP_CONFIG.drawKeypointStrokeColor;
-      ctx.lineWidth   = 1;
-      for (const name in sk) {
-        const kp = sk[name];
+      ctx.lineWidth = 1;
+      const radius = APP_CONFIG.drawKeypointRadius;
+
+      // Draw only essential keypoints provided by the pose module's smoothedKeypoints
+      // Assuming essentialNames is defined or accessible if needed for specific iteration,
+      // or just iterate over Object.keys(smoothedKeypoints)
+      for (const name in smoothedKeypoints) {
+        const kp = smoothedKeypoints[name];
+        // Use POSE_DETECTION_CONFIG.minPoseConfidence for consistency with module
         if (!kp || kp.score < POSE_DETECTION_CONFIG.minPoseConfidence) continue;
         ctx.beginPath();
-        ctx.arc(kp.x, kp.y, APP_CONFIG.drawKeypointRadius, 0, 2*Math.PI);
-        ctx.fill(); ctx.stroke();
+        ctx.arc(kp.x, kp.y, radius, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
       }
-      // draw skeleton
-      // choose color by pose
-      ctx.strokeStyle = poseColors[currentPose] || APP_CONFIG.drawSkeletonColor;
-      ctx.lineWidth = 2;
+      
+      if (poseModuleState.standingNoseY) {
+        ctx.beginPath();
+        ctx.strokeStyle = poseModuleState.ducking ? APP_CONFIG.duckingRefLineColor : APP_CONFIG.standingRefLineColor;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 5]);
+        ctx.moveTo(0, poseModuleState.standingNoseY);
+        ctx.lineTo(videoWidthForRefLine, poseModuleState.standingNoseY); // Use passed video width
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      
       ctx.beginPath();
-      const canDraw = (...pts) => pts.every(n => sk[n] && sk[n].score >= POSE_DETECTION_CONFIG.minPoseConfidence);
-      if (canDraw('nose','left_shoulder')) { ctx.moveTo(sk.nose.x, sk.nose.y); ctx.lineTo(sk.left_shoulder.x, sk.left_shoulder.y); }
-      if (canDraw('nose','right_shoulder')){ ctx.moveTo(sk.nose.x, sk.nose.y); ctx.lineTo(sk.right_shoulder.x, sk.right_shoulder.y); }
-      if (canDraw('left_shoulder','left_elbow','left_wrist')){
-        ctx.moveTo(sk.left_shoulder.x, sk.left_shoulder.y);
-        ctx.lineTo(sk.left_elbow.x, sk.left_elbow.y);
-        ctx.lineTo(sk.left_wrist.x, sk.left_wrist.y);
-      }
-      if (canDraw('right_shoulder','right_elbow','right_wrist')){
-        ctx.moveTo(sk.right_shoulder.x, sk.right_shoulder.y);
-        ctx.lineTo(sk.right_elbow.x, sk.right_elbow.y);
-        ctx.lineTo(sk.right_wrist.x, sk.right_wrist.y);
-      }
-      // ... add other bones as needed ...
+      ctx.strokeStyle = APP_CONFIG.drawSkeletonColor;
+      ctx.lineWidth = APP_CONFIG.drawSkeletonLineWidth;
+
+      const skp = smoothedKeypoints;
+      const canDraw = (...kps) => kps.every(kpName => skp[kpName] && skp[kpName].score >= POSE_DETECTION_CONFIG.minPoseConfidence);
+
+      if (canDraw("nose", "left_shoulder")) { ctx.moveTo(skp.nose.x, skp.nose.y); ctx.lineTo(skp.left_shoulder.x, skp.left_shoulder.y); }
+      if (canDraw("nose", "right_shoulder")) { ctx.moveTo(skp.nose.x, skp.nose.y); ctx.lineTo(skp.right_shoulder.x, skp.right_shoulder.y); }
+      if (canDraw("left_shoulder", "right_shoulder")) { ctx.moveTo(skp.left_shoulder.x, skp.left_shoulder.y); ctx.lineTo(skp.right_shoulder.x, skp.right_shoulder.y); }
+      if (canDraw("left_shoulder", "left_hip")) { ctx.moveTo(skp.left_shoulder.x, skp.left_shoulder.y); ctx.lineTo(skp.left_hip.x, skp.left_hip.y); }
+      if (canDraw("right_shoulder", "right_hip")) { ctx.moveTo(skp.right_shoulder.x, skp.right_shoulder.y); ctx.lineTo(skp.right_hip.x, skp.right_hip.y); }
+      if (canDraw("left_hip", "right_hip")) { ctx.moveTo(skp.left_hip.x, skp.left_hip.y); ctx.lineTo(skp.right_hip.x, skp.right_hip.y); }
+      if (canDraw("left_shoulder", "left_elbow", "left_wrist")) { ctx.moveTo(skp.left_shoulder.x, skp.left_shoulder.y); ctx.lineTo(skp.left_elbow.x, skp.left_elbow.y); ctx.lineTo(skp.left_wrist.x, skp.left_wrist.y); }
+      if (canDraw("right_shoulder", "right_elbow", "right_wrist")) { ctx.moveTo(skp.right_shoulder.x, skp.right_shoulder.y); ctx.lineTo(skp.right_elbow.x, skp.right_elbow.y); ctx.lineTo(skp.right_wrist.x, skp.right_wrist.y); }
+      
       ctx.stroke();
     }
 
-    // main
-    (async () => {
-      const video = document.getElementById('video');
-      const canvas = document.getElementById('overlay');
-      const poseText = document.getElementById('poseText');
-      const ctx = canvas.getContext('2d');
+    // This function now sets up controls for APP_CONFIG and POSE_DETECTION_CONFIG
+    function setupConfigControls() {
+        const configVarsListDiv = document.getElementById('config-vars-list');
+        const statusP = document.getElementById('configStatus');
+        configVarsListDiv.innerHTML = '';
 
-      // request camera
-      const stream = await navigator.mediaDevices.getUserMedia({video:true});
-      video.srcObject = stream;
-      await video.play();
-      canvas.width  = video.videoWidth;
-      canvas.height = video.videoHeight;
+        const configsToDisplay = {
+            "App Config": {config: APP_CONFIG, integerVars: appIntegerConfigVars},
+            "Pose Detection Config": {config: POSE_DETECTION_CONFIG, integerVars: [
+                // List integer vars from POSE_DETECTION_CONFIG here for correct input[type=number] step
+                'minTorsoHeight', 'minShoulderWidth', 'temporarilyIncompleteDurationMs',
+                'standingHeightWindowSize', 'minimumDuckDistance', 'punchMinPixelSEDistance',
+                'minFramesForValidStandingHeight', 'smoothingPasses', 'minEssentialKeypointsForValidPose'
+            ]}
+        };
 
-      // load detector
-      const detector = await poseDetection.createDetector(
-        poseDetection.SupportedModels.PoseNet,
-        { architecture: 'MobileNetV1', outputStride: 16, multiplier: .75 }
-      );
-      console.log('Model loaded');
+        for (const sectionName in configsToDisplay) {
+            const sectionHeader = document.createElement('h4');
+            sectionHeader.textContent = sectionName;
+            sectionHeader.style.marginTop = "15px";
+            sectionHeader.style.borderTop = "1px dashed #666";
+            sectionHeader.style.paddingTop = "10px";
+            configVarsListDiv.appendChild(sectionHeader);
 
-      let lastPose = null;
+            const currentConfig = configsToDisplay[sectionName].config;
+            const currentIntegerVars = configsToDisplay[sectionName].integerVars;
 
-      // loop
-      async function renderLoop() {
-        const poses = await detector.estimatePoses(video);
-        if (poses.length) {
-          // convert and interpret
-          const simpleKP = poses[0].keypoints.map(kp=>({
-            name: kp.name, x: kp.x, y: kp.y, score: kp.score
-          }));
-          const poseState = interpretPoseFromModule(simpleKP);
-          lastPose = poseState;
-          poseText.textContent = poseState;
+            Object.entries(currentConfig).forEach(([varName, currentValue]) => {
+                if (typeof currentValue === 'string' && !varName.toLowerCase().includes('color')) return;
+
+                const varRowDiv = document.createElement('div');
+                varRowDiv.className = 'config-row';
+                const label = document.createElement('label');
+                label.htmlFor = `config_input_${varName}`;
+                label.textContent = `${varName}:`;
+                varRowDiv.appendChild(label);
+
+                const input = document.createElement('input');
+                input.type = (typeof currentValue === 'string' && varName.toLowerCase().includes('color')) ? 'text' : 'number';
+                input.id = `config_input_${varName}`;
+                input.value = currentValue;
+
+                if (input.type === 'number') {
+                    input.step = currentIntegerVars.includes(varName) ? "1" : 
+                                 (['minPoseConfidence', 'poseSmoothFactor', 'torsoChangeThreshold', 
+                                   'shoulderHipDistanceMultiplier', 'bodyScaleEMAlpha', 'punchYAlignmentFactor',
+                                   'duckThresholdRatio', 'leanThresholdX', 'punchThresholdX'].includes(varName) ? "0.01" : "0.1");
+                }
+                varRowDiv.appendChild(input);
+
+                const applyBtn = document.createElement('button');
+                applyBtn.textContent = 'Update';
+                varRowDiv.appendChild(applyBtn);
+
+                applyBtn.addEventListener('click', () => {
+                    const newValueStr = input.value;
+                    let newValue;
+                    if (input.type === 'text') newValue = newValueStr;
+                    else newValue = currentIntegerVars.includes(varName) ? parseInt(newValueStr, 10) : parseFloat(newValueStr);
+
+                    if (input.type === 'number' && isNaN(newValue)) {
+                        statusP.textContent = `Error: Invalid number for ${varName}.`;
+                        statusP.style.color = '#ff6b6b';
+                        input.value = currentConfig[varName];
+                        return;
+                    }
+                    currentConfig[varName] = newValue; // Directly update the imported config object
+                    statusP.textContent = `${varName} updated to ${currentConfig[varName]}.`;
+                    statusP.style.color = '#7f7';
+                    console.log(`${sectionName} '${varName}' updated:`, currentConfig[varName]);
+                });
+                configVarsListDiv.appendChild(varRowDiv);
+            });
         }
-        ctx.clearRect(0,0,canvas.width,canvas.height);
-        drawKeypoints(ctx, video.videoWidth, lastPose);
-        requestAnimationFrame(renderLoop);
+        statusP.textContent = 'Config loaded. Adjust values and click "Update".';
+        statusP.style.color = '#aaa';
+
+        document.getElementById('resetPoseStateButton').addEventListener('click', () => {
+            resetPoseDetectionState(); // Call the reset function from the module
+            console.log("Pose detection state has been reset.");
+            statusP.textContent = 'Pose detection state reset.';
+            statusP.style.color = '#00bcd4';
+        });
+    }
+
+    let video;
+    async function main() {
+      await tf.setBackend('webgl');
+      await tf.ready();
+      console.log('TF backend:', tf.getBackend());
+
+      video = document.getElementById('video');
+      const canvas = document.getElementById('overlay'),
+            ctx = canvas.getContext('2d'),
+            poseTextEl = document.getElementById('poseText');
+
+      setupConfigControls();
+
+      const stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
+      video.srcObject = stream;
+      await new Promise(r => video.onloadedmetadata = r);
+      video.play().catch(e => {
+          console.error("Video play failed:", e);
+          logToScreen("Video play failed. User interaction might be needed.", "error");
+      });
+
+      const detector = await poseDetection.createDetector(
+        poseDetection.SupportedModels.MoveNet,
+        {modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING}
+      );
+
+      poseTextEl.innerText = 'Ready!';
+
+      async function frameLoop() {
+        appState.frameCounter++;
+        if (video.readyState < video.HAVE_METADATA || video.paused || video.ended) {
+            requestAnimationFrame(frameLoop);
+            return;
+        }
+
+        if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+            canvas.width = video.clientWidth;
+            canvas.height = video.clientHeight;
+        }
+
+        const poses = await detector.estimatePoses(video, {flipHorizontal: false});
+        
+        // Pass updateDebugValue as the callback for the module to update debug values
+        const estimatedState = interpretPoseFromModule(poses[0]?.keypoints || [], updateDebugValue);
+
+        if (estimatedState !== POSE_STATES.POSE_TEMPORARILY_INCOMPLETE) {
+          if (poseTextEl.innerText !== estimatedState) {
+              poseTextEl.innerText = estimatedState;
+          }
+        }
+        
+        // Update general debug values from appState or module's general state
+        const poseInternalState = getPoseDetectionInternalState();
+        updateDebugValue('App Frames', appState.frameCounter);
+        // updateDebugValue('Body Scale (Module)', poseInternalState.bodyScale); // Example if not updated via callback
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (poses[0]?.keypoints && video.videoWidth > 0 && video.videoHeight > 0) {
+            ctx.save();
+            const videoAspectRatio = video.videoWidth / video.videoHeight;
+            const canvasAspectRatio = canvas.width / canvas.height;
+            let renderWidth, renderHeight, offsetX = 0, offsetY = 0;
+
+            if (videoAspectRatio > canvasAspectRatio) {
+                renderWidth = canvas.width;
+                renderHeight = renderWidth / videoAspectRatio;
+                offsetY = (canvas.height - renderHeight) / 2;
+            } else {
+                renderHeight = canvas.height;
+                renderWidth = renderHeight * videoAspectRatio;
+                offsetX = (canvas.width - renderWidth) / 2;
+            }
+            ctx.translate(offsetX, offsetY);
+            ctx.scale(renderWidth / video.videoWidth, renderHeight / video.videoHeight);
+            
+            drawKeypoints(ctx, video.videoWidth); // Pass video.videoWidth for ref line
+            ctx.restore();
+        }
+        requestAnimationFrame(frameLoop);
       }
-      renderLoop();
-    })();
+      frameLoop();
+    }
+
+    main().catch(e => {
+      console.error(e);
+      const poseTextEl = document.getElementById('poseText');
+      if(poseTextEl) poseTextEl.innerText = 'Critical Error!';
+    });
   </script>
 </body>
 </html>
