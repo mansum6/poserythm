@@ -36,12 +36,9 @@ export const POSE_DETECTION_CONFIG = {
   minEssentialKeypointsForValidPose: 7, // Min # of essential keypoints to consider pose valid
   
   // New punch confidence parameters
-  punchConfidenceThreshold: 0.6,        // Minimum confidence for individual punch detection
-  punchBothCombinedThreshold: 0.8,      // Combined confidence threshold for PUNCH_BOTH
-  punchBothMinIndividualThreshold: 0.3, // Minimum individual confidence required for PUNCH_BOTH consideration
-  punchExtensionWeight: 0.4,            // Weight for extension component in confidence calculation
-  punchAlignmentWeight: 0.3,            // Weight for Y-alignment component in confidence calculation
-  punchWristAheadWeight: 0.3,           // Weight for wrist-ahead component in confidence calculation
+  punchConfidenceThreshold: 0.8,         // Minimum confidence for individual punch detection
+punchBothCombinedThreshold: 1.2,       // Combined confidence threshold for PUNCH_BOTH  
+punchMinExtensionRatio: 0.8,           // How extended the arm must be (0.8 = 80% extension toward 90 degrees)
 };
 
 export const POSE_STATES = {
@@ -111,36 +108,27 @@ function _smoothAndGetKeypoint(name, map) {
 function _calculatePunchConfidence(w, e, s, isLeft, shoulderMidY, shoulderWidth) {
   if(!w || !e || !s) return 0;
 
-  // Check if wrist is ahead of elbow and elbow is ahead of shoulder (basic punch formation)
+  // Check basic punch formation (wrist ahead of elbow, elbow ahead of shoulder)
   const wristAhead = isLeft ? (w.x > e.x && e.x > s.x) : (w.x < e.x && e.x < s.x);
-  const wristAheadScore = wristAhead ? 1.0 : 0.0;
+  if (!wristAhead) return 0;
 
-  // Calculate extension distances
+  // Calculate how extended the arm is (0 = not extended, 1 = fully extended at 90 degrees)
   const seDist = Math.abs(s.x - e.x);
   const ewDist = Math.abs(e.x - w.x);
+  const totalArmLength = seDist + ewDist;
   
-  // Minimum distance check (if below minimum, confidence is 0)
-  if (seDist < POSE_DETECTION_CONFIG.punchMinPixelSEDistance) {
-    return 0;
-  }
-
-  // Extension confidence based on how far the arm is extended
+  if (seDist < 10) return 0; // Minimum distance check
+  
+  // Extension ratio: how much of the arm is extended horizontally
   const extensionRatio = ewDist / Math.max(1, seDist);
-  const maxExpectedExtension = 2.0; // Assume maximum reasonable extension ratio
-  const extensionScore = Math.min(1.0, extensionRatio / (POSE_DETECTION_CONFIG.punchThresholdX * maxExpectedExtension));
-
-  // Y-alignment confidence (how well aligned the wrist is with shoulder height)
-  const yOffset = Math.abs(w.y - shoulderMidY);
-  const maxAllowedOffset = shoulderWidth * POSE_DETECTION_CONFIG.punchYAlignmentFactor;
-  const alignmentScore = Math.max(0, 1.0 - (yOffset / Math.max(1, maxAllowedOffset)));
-
-  // Combine scores with weights
-  const confidence = 
-    POSE_DETECTION_CONFIG.punchWristAheadWeight * wristAheadScore +
-    POSE_DETECTION_CONFIG.punchExtensionWeight * extensionScore +
-    POSE_DETECTION_CONFIG.punchAlignmentWeight * alignmentScore;
-
-  return Math.max(0, Math.min(1, confidence));
+  
+  // Y-alignment: how close wrist is to shoulder height
+  const yAlignment = Math.max(0, 1 - Math.abs(w.y - shoulderMidY) / (shoulderWidth * 0.5));
+  
+  // Simple confidence: extension must meet minimum ratio, then factor in alignment
+  const baseConfidence = Math.max(0, extensionRatio / POSE_DETECTION_CONFIG.punchMinExtensionRatio);
+  
+  return Math.min(1, baseConfidence * yAlignment);
 }
 
 function _updateBodyScale(torsoHeight, shoulderWidth, debugUpdater) {
