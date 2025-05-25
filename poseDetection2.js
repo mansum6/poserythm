@@ -38,7 +38,7 @@ export const POSE_DETECTION_CONFIG = {
   // New punch confidence parameters
   punchConfidenceThreshold: 0.8,         // Minimum confidence for individual punch detection
 punchBothCombinedThreshold: 1.6,       // Combined confidence threshold for PUNCH_BOTH  
-punchMinExtensionRatio: 0.6,           // How extended the arm must be (0.8 = 80% extension toward 90 degrees)
+punchMinExtensionRatio: 0.5,           // How extended the arm must be (0.8 = 80% extension toward 90 degrees)
   punchBothMinIndividualThreshold:1.2
 };
 
@@ -303,8 +303,6 @@ export function interpretPose(rawKeypoints, externalDebugUpdater = null) {
     externalDebugUpdater('Combined Punch Confidence', combinedPunchConfidence.toFixed(3));
     externalDebugUpdater('Both Punches Min Threshold Met', bothPunchesHaveMinimum);
   }
-console.log("Both Punch Min: "+bothPunchesHaveMinimum)
-  console.log("Combined Punch Confidence: "+combinedPunchConfidence)
   if (bothPunchesHaveMinimum && combinedPunchConfidence >= POSE_DETECTION_CONFIG.punchBothCombinedThreshold) {
     return POSE_STATES.PUNCH_BOTH;
   }
