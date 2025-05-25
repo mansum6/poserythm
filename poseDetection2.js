@@ -303,7 +303,8 @@ export function interpretPose(rawKeypoints, externalDebugUpdater = null) {
     externalDebugUpdater('Combined Punch Confidence', combinedPunchConfidence.toFixed(3));
     externalDebugUpdater('Both Punches Min Threshold Met', bothPunchesHaveMinimum);
   }
-
+console.log("Both Punch Min: "+bothPunchesHaveMinimum)
+  console.log("Combined Punch Confidence: "+combinedPunchConfidence)
   if (bothPunchesHaveMinimum && combinedPunchConfidence >= POSE_DETECTION_CONFIG.punchBothCombinedThreshold) {
     return POSE_STATES.PUNCH_BOTH;
   }
