@@ -371,7 +371,7 @@
 
         if (estimatedState !== POSE_STATES.POSE_TEMPORARILY_INCOMPLETE) {
           if (poseTextEl.innerText !== estimatedState) {
-              updatePoseText(estimatedState);
+              updatePoseText(poseTextEl,estimatedState);
           }
         }
         
