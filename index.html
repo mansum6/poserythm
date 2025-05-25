@@ -334,7 +334,11 @@
       const canvas = document.getElementById('overlay'),
             ctx = canvas.getContext('2d'),
             poseTextEl = document.getElementById('poseText');
-
+      ctx.save(); // Save current context state
+      
+      // Flip horizontally
+      ctx.translate(ctx.canvas.width, 0); // Move origin to the right edge
+      ctx.scale(-1, 1); // Flip horizontally
       setupConfigControls();
 
       const stream = await navigator.mediaDevices.getUserMedia({video: {width: 640, height: 480}});
